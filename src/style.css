@@ -1,0 +1,138 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --font-ui: 'Outfit', sans-serif;
+  --font-mono: 'Space Mono', monospace;
+
+  /* Backgrounds */
+  --c-bg: #080c18;
+  --c-surface: rgba(20, 26, 54, 0.72);
+  --c-surface-raised: rgba(22, 28, 58, 0.88);
+
+  /* Borders */
+  --c-border: rgba(150, 158, 190, 0.13);
+  --c-border-subtle: rgba(140, 148, 180, 0.07);
+  --c-border-bright: rgba(160, 168, 210, 0.26);
+
+  /* Text */
+  --c-text: rgba(236, 238, 244, 0.93);
+  --c-text-muted: rgba(192, 195, 206, 0.58);
+  --c-text-dim: rgba(150, 153, 162, 0.36);
+
+  /* Accent — blue→purple→pink gradient */
+  --gradient-accent: linear-gradient(90deg, #2244ee 0%, #9922cc 55%, #ee2288 100%);
+  --gradient-accent-diagonal: linear-gradient(135deg, #2244ee 0%, #9922cc 55%, #ee2288 100%);
+
+  /* Accent flat fallbacks */
+  --c-accent: rgba(100, 148, 255, 1);
+  --c-accent-dim: rgba(60, 90, 220, 0.14);
+  --c-accent-border: rgba(80, 120, 255, 0.35);
+
+  /* Gold / primary selection */
+  --c-gold: rgba(255, 210, 100, 1);
+  --c-gold-dim: rgba(255, 210, 100, 0.13);
+  --c-gold-border: rgba(255, 210, 100, 0.32);
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --transition: 0.18s ease;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--c-bg);
+  font-family: var(--font-ui);
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+}
+
+/* ── Panel (glassmorphism base) ── */
+.panel {
+  background: linear-gradient(
+    158deg,
+    rgba(13, 14, 20, 0.94) 0%,
+    rgba(8,  9,  15, 0.97) 100%
+  );
+  border: 0.5px solid var(--c-border);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.04) inset,
+    0 6px 28px rgba(0, 0, 0, 0.50);
+}
+
+/* ── HUD pill ── */
+.hud-pill {
+  background: rgba(255,255,255,0.04);
+  border: 0.5px solid var(--c-border);
+  border-radius: 20px;
+  padding: 4px 11px;
+  font-size: 11px;
+  color: var(--c-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+
+/* ── HUD button ── */
+.hud-btn {
+  background: rgba(255,255,255,0.04);
+  border: 0.5px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 11px;
+  font-size: 11px;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  transition:
+    background var(--transition),
+    border-color var(--transition),
+    color var(--transition),
+    box-shadow var(--transition);
+  white-space: nowrap;
+  user-select: none;
+  letter-spacing: 0.02em;
+}
+.hud-btn:hover {
+  background: rgba(180, 188, 220, 0.07);
+  border-color: var(--c-border-bright);
+  color: var(--c-text);
+}
+.hud-btn.active {
+  background: linear-gradient(135deg, rgba(24, 32, 80, 0.55) 0%, rgba(60, 20, 100, 0.40) 100%);
+  border-color: rgba(130, 110, 200, 0.38);
+  color: rgba(190, 200, 240, 0.92);
+  box-shadow:
+    0 0 10px rgba(80, 60, 180, 0.14),
+    0 1px 0 rgba(255,255,255,0.05) inset;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(100,120,255,0.15); border-radius: 2px; }
+
+/* ── Range inputs ── */
+input[type=range] {
+  accent-color: rgba(100, 148, 255, 0.85);
+}

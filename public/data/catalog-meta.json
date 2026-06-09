@@ -1,0 +1,19 @@
+{
+  "starCount": 39856,
+  "bytesPerStar": 48,
+  "fields": [
+    "x",
+    "y",
+    "z",
+    "r",
+    "g",
+    "b",
+    "vmag",
+    "distLy",
+    "hipId",
+    "nameIdx",
+    "_pad",
+    "_pad"
+  ],
+  "buildDate": "2026-06-07T00:08:41.043Z"
+}

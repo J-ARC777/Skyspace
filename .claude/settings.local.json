@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const fs = require\\('fs'\\); const stat = fs.statSync\\('public/data/stars.bin'\\); console.log\\('stars.bin size:', stat.size, 'bytes'\\); console.log\\('expected ~4812 stars:', Math.floor\\(stat.size/48\\), 'stars'\\);\")",
+      "Bash(node --input-type=module)",
+      "Bash(node -e \"const pkg = require\\('./package.json'\\); console.log\\('deps:', JSON.stringify\\({...pkg.dependencies, ...pkg.devDependencies}, null, 2\\)\\);\")",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:5173/)",
+      "Bash(rmdir /s /q node_modules)",
+      "Bash(del package-lock.json)"
+    ]
+  }
+}
