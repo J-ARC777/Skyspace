@@ -19,9 +19,10 @@ export class CatalogLoader {
   }
 
   async load() {
+    const base = import.meta.env.BASE_URL;
     const [binRes, namesRes] = await Promise.all([
-      fetch('/data/stars.bin'),
-      fetch('/data/star-names.json'),
+      fetch(`${base}data/stars.bin`),
+      fetch(`${base}data/star-names.json`),
     ]);
 
     const [buffer, names] = await Promise.all([
