@@ -121,8 +121,6 @@ varying float vSelected;
 varying float vAlpha;
 varying float vLuminance;
 
-uniform sampler2D uMap;
-uniform sampler2D uMapFaint;
 uniform float uExposure;
 uniform float uMinBrightness;
 uniform float uExpBrightCompression;
@@ -131,15 +129,22 @@ uniform float uFov;
 void main() {
   if (vAlpha < 0.01) discard;
 
-  // LOD blend: faint/wide → pinpoint texture; bright/zoomed → glow texture
-  float zoomBlend = clamp((15.0 - uFov) / 10.0, 0.0, 1.0); // 0 at FOV≥15°, 1 at FOV≤5°
-  float lumBlend  = smoothstep(0.2, 0.65, vLuminance);
-  float texBlend  = clamp(lumBlend + zoomBlend * 0.8, 0.0, 1.0);
+  // Analytic profile — no texture, no mip artifacts, perfect circles at every size.
+  // d: 0=centre, 1=sprite edge.
+  float d = length(gl_PointCoord - 0.5) * 2.0;
 
-  vec4 texelFaint = texture2D(uMapFaint, gl_PointCoord);
-  vec4 texelGlow  = texture2D(uMap,      gl_PointCoord);
-  vec4 texel = mix(texelFaint, texelGlow, texBlend);
-  float luma = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+  // Faint stars: very tight Gaussian pinpoint.
+  // Bright/zoomed stars: wider halo with a punchy core.
+  float zoomBlend = clamp((15.0 - uFov) / 10.0, 0.0, 1.0);
+  float lumBlend  = smoothstep(0.2, 0.65, vLuminance);
+  float profile   = clamp(lumBlend + zoomBlend * 0.8, 0.0, 1.0);
+
+  float tight = exp(-d * d * 18.0);             // pinpoint for faint stars
+  float wide  = exp(-d * d *  4.5)              // soft halo
+              + 0.6 * exp(-d * d * 40.0);       // bright core on top
+  float luma  = mix(tight, wide, profile);
+
+  if (luma < 0.004) discard;
 
   // Color dodge: burns rapidly toward white at center.
   float core = pow(luma, 1.4);
@@ -362,8 +367,6 @@ export class StarField {
         uTime:             { value: 0 },
         uMinMag:           { value: this.maxMagnitude },
         uMaxDist:          { value: this.maxDistanceLy },
-        uMap:              { value: this._createStarTexture() },
-        uMapFaint:         { value: this._createFaintTexture() },
         uSizeScale:        { value: 1.0 },
         uSizeMin:          { value: 1.6 },
         uBaseSize:         { value: 2.6 },
@@ -483,76 +486,6 @@ export class StarField {
     if (this._lineMat)      this._lineMat.uniforms.uTime.value      = time;
   }
 
-  _createStarTexture() {
-    // Gradient fades to rgba(0,0,0,0) — NOT rgba(255,255,255,0).
-    // With unpremultiplied alpha, a white-transparent edge keeps RGB=1 so luma=1
-    // in every corner pixel, producing a visible square. Black-transparent gives luma=0.
-    const canvas = document.createElement('canvas');
-    canvas.width = 64; canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0,    'rgba(255,255,255,1.00)');
-    g.addColorStop(0.07, 'rgba(255,255,255,0.92)');
-    g.addColorStop(0.22, 'rgba(255,255,255,0.30)');
-    g.addColorStop(0.45, 'rgba(255,255,255,0.05)');
-    g.addColorStop(1.0,  'rgba(0,0,0,0.00)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 64, 64);
-    const placeholder = new THREE.CanvasTexture(canvas);
-    placeholder.generateMipmaps = false;
-    placeholder.minFilter = THREE.LinearFilter;
-
-    const base = import.meta.env.BASE_URL;
-    new THREE.TextureLoader().load(
-      `${base}star_2d_distance.png`,
-      (tex) => {
-        tex.generateMipmaps = false;
-        tex.minFilter = THREE.LinearFilter;
-        if (this.material) {
-          this.material.uniforms.uMap.value.dispose();
-          this.material.uniforms.uMap.value = tex;
-        }
-      },
-      undefined,
-      (err) => console.warn('[StarField] star texture failed to load:', err),
-    );
-
-    return placeholder;
-  }
-
-  _createFaintTexture() {
-    // Same fix: fade to black-transparent so luma=0 at edges, no square artifact.
-    const canvas = document.createElement('canvas');
-    canvas.width = 64; canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    g.addColorStop(0,    'rgba(255,255,255,1.00)');
-    g.addColorStop(0.04, 'rgba(255,255,255,0.80)');
-    g.addColorStop(0.10, 'rgba(255,255,255,0.10)');
-    g.addColorStop(0.20, 'rgba(0,0,0,0.00)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 64, 64);
-    const placeholder = new THREE.CanvasTexture(canvas);
-    placeholder.generateMipmaps = false;
-    placeholder.minFilter = THREE.LinearFilter;
-
-    const base = import.meta.env.BASE_URL;
-    new THREE.TextureLoader().load(
-      `${base}star_2d_distance_.png`,
-      (tex) => {
-        tex.generateMipmaps = false;
-        tex.minFilter = THREE.LinearFilter;
-        if (this.material) {
-          this.material.uniforms.uMapFaint.value.dispose();
-          this.material.uniforms.uMapFaint.value = tex;
-        }
-      },
-      undefined,
-      (err) => console.warn('[StarField] faint star texture failed to load:', err),
-    );
-
-    return placeholder;
-  }
 
   setScale(scale) {
     this.material.uniforms.uSizeScale.value = scale;
