@@ -57,14 +57,11 @@ export class SelectionBar {
         padding: 2px 0;
       }
       .sel-dot {
-        width: 6px; height: 6px;
         border-radius: 50%;
         flex-shrink: 0;
       }
-      .sel-dot.primary { background: var(--c-gold); }
-      .sel-dot.secondary { background: var(--c-accent); opacity: 0.8; }
-      .sel-star-name { font-size: 11px; color: var(--c-text); flex: 1; }
-      .sel-star-name.primary { color: var(--c-gold); }
+      .sel-star-name { font-size: 11px; color: var(--c-accent); flex: 1; }
+      .sel-star-name.primary { color: var(--c-text); }
       .sel-star-dist { font-size: 10px; color: var(--c-text-dim); }
       .sel-actions { display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap; }
       .sel-header {
@@ -99,9 +96,20 @@ export class SelectionBar {
       const { name, dist } = this._starLabel(idx);
       const isPrimary = idx === primary;
       const distStr = dist > 0 ? (dist < 10 ? dist.toFixed(2) : Math.round(dist)) + ' ly' : '—';
+
+      // Spectral color from catalog (0–1 floats → CSS rgb)
+      const r = Math.round(this.catalog.colors[idx * 3]     * 255);
+      const g = Math.round(this.catalog.colors[idx * 3 + 1] * 255);
+      const b = Math.round(this.catalog.colors[idx * 3 + 2] * 255);
+      const dotColor = `rgb(${r},${g},${b})`;
+
+      // Dot size: magnitude 0 → 9px, magnitude 6 → 4px
+      const mag = this.catalog.magnitudes[idx];
+      const dotSize = Math.max(4, Math.round(9 - mag * 0.8)) + 'px';
+
       return `
         <div class="sel-star-row">
-          <div class="sel-dot ${isPrimary ? 'primary' : 'secondary'}"></div>
+          <div class="sel-dot" style="width:${dotSize};height:${dotSize};background:${dotColor}"></div>
           <span class="sel-star-name ${isPrimary ? 'primary' : ''}">${name}</span>
           <span class="sel-star-dist">${distStr}</span>
         </div>

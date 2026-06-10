@@ -142,6 +142,15 @@ export class SceneManager {
     return () => { this._updateCallbacks = this._updateCallbacks.filter(f => f !== fn); };
   }
 
+  /** Register a callback fired AFTER composer.render() each frame */
+  onPostRender(fn) {
+    this._postRenderCallbacks = this._postRenderCallbacks || [];
+    this._postRenderCallbacks.push(fn);
+    return () => {
+      this._postRenderCallbacks = (this._postRenderCallbacks || []).filter(f => f !== fn);
+    };
+  }
+
   start() {
     if (this._running) return;
     this._running = true;
@@ -155,6 +164,9 @@ export class SceneManager {
     const t = this._clock.getElapsedTime();
     this._updateCallbacks.forEach(fn => fn(t));
     this.composer.render();
+    if (this._postRenderCallbacks?.length) {
+      this._postRenderCallbacks.forEach(fn => fn(t));
+    }
   }
 
   stop() {

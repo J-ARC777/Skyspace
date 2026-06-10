@@ -41,7 +41,7 @@ export class PTZCamera {
   }
 
   _onDown(e) {
-    if (e.target.closest('.panel, .nav-dock, .sel-bar, .skymap-toolbar, input, button')) return;
+    if (e.target.closest('.panel, .nav-dock, .sel-bar, .skymap-toolbar, .const-label, .const-modal, input, button')) return;
     this._dragging = true;
     this._lastX = e.clientX;
     this._lastY = e.clientY;
@@ -90,9 +90,9 @@ export class PTZCamera {
   }
 
   _pan(dx, dy) {
-    // Sensitivity scales with FOV — use exponent > 1 so control tightens more
-    // aggressively at high zoom. panScale slider lets the user tune the exponent.
-    const sensitivity = Math.pow(this._fov / 70, 1 + this._panScale) * 0.003;
+    // Linear FOV scaling keeps angular degrees-per-pixel constant at any zoom level.
+    // panScale adds a gentle extra tightening above 1.0 for personal preference.
+    const sensitivity = Math.pow(this._fov / 70, 1.0 + this._panScale * 0.3) * 0.003;
     this._az  -= dx * sensitivity;
     this._alt  = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01,
                           this._alt - dy * sensitivity));

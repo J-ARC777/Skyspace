@@ -41,6 +41,7 @@ async function boot() {
   const starField = new StarField(catalog);
   sm.scene.add(starField.points);
   sm.scene.add(starField.rings);
+  sm.scene.add(starField.lineMesh);
   sm.scene.background = new THREE.Color(0x080c18);
 
   selectionState.onchange((s) => starField.updateSelection(s));

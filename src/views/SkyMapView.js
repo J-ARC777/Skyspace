@@ -5,7 +5,12 @@
  */
 
 import * as THREE from 'three';
-import { PTZCamera } from '../core/PTZCamera.js';
+import { LineSegments2 }        from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial }         from 'three/addons/lines/LineMaterial.js';
+import { PTZCamera }           from '../core/PTZCamera.js';
+import { ConstellationLoader } from '../data/ConstellationLoader.js';
+import { ConstellationModal }  from './ConstellationModal.js';
 
 export class SkyMapView {
   constructor({ scene, sceneManager, starField, catalog, selection, observer, viewState }) {
@@ -31,6 +36,12 @@ export class SkyMapView {
     this._mouse = new THREE.Vector2();
     this._cleanups = [];
     this._constellationLines = null;
+    this._constellationLabels = [];
+    this._constellationsVisible = false;
+    this._constLoader = new ConstellationLoader();
+    this._constModal  = new ConstellationModal(sceneManager, catalog);
+    this._constLoaded = false;
+    this._lastDt = 0;
   }
 
   mount(container) {
@@ -45,6 +56,19 @@ export class SkyMapView {
     this._buildDevPanel(container);
     this._buildParallaxBar(container);
     this._bindEvents(container);
+
+    // Set initial resolution for screen-space shaders
+    this.starField.setResolution(container.clientWidth, container.clientHeight);
+    const onResize = () => {
+      this.starField.setResolution(container.clientWidth, container.clientHeight);
+      if (this._constMaterials) {
+        for (const mat of this._constMaterials.values()) {
+          mat.uniforms.uResolution.value.set(container.clientWidth, container.clientHeight);
+        }
+      }
+    };
+    window.addEventListener('resize', onResize);
+    this._cleanups.push(() => window.removeEventListener('resize', onResize));
     this.sm.setRayleigh(true, 0.5, 0.55);
 
     // Update Rayleigh horizon each frame
@@ -53,6 +77,7 @@ export class SkyMapView {
       this.sm.setRayleigh(true, h, 0.55);
     });
     this._cleanups.push(off);
+
   }
 
   _buildFovBar(container) {
@@ -154,20 +179,110 @@ export class SkyMapView {
   }
 
   _buildConstellationLines() {
-    // Simplified Orion as placeholder — real data would be a full IAU constellation set
-    // Each pair of indices references named stars by approximate position
-    const lines = new THREE.Group();
-    const mat = new THREE.LineBasicMaterial({
-      color: 0x4488aa,
-      transparent: true,
-      opacity: 0.3,
-      depthWrite: false,
-    });
+    const group = new THREE.Group();
+    group.visible = false;
+    this._constellationLines = group;
+    this.scene.add(group);
 
-    // We'll wire this properly once catalog is loaded with named star lookup
-    // For now add the group so it exists in scene
-    this._constellationLines = lines;
-    this.scene.add(lines);
+    // Per-constellation LineMaterial instances for thick lines + highlight
+    this._constMaterials = new Map(); // abbrev → LineMaterial
+
+    this._constLoader.load(this.catalog).then((constellations) => {
+      this._constLoaded = true;
+      const res = new THREE.Vector2(this.container.clientWidth, this.container.clientHeight);
+      for (const con of Object.values(constellations)) {
+        if (con.segments.length === 0) continue;
+        const positions = [];
+        for (const { a, b } of con.segments) {
+          positions.push(
+            this.catalog.positions[a * 3],     this.catalog.positions[a * 3 + 1], this.catalog.positions[a * 3 + 2],
+            this.catalog.positions[b * 3],     this.catalog.positions[b * 3 + 1], this.catalog.positions[b * 3 + 2],
+          );
+        }
+        const geo = new LineSegmentsGeometry();
+        geo.setPositions(positions);
+        const mat = new LineMaterial({
+          color:       0x4d7daa,
+          linewidth:   1.8,         // pixels
+          opacity:     0.45,
+          transparent: true,
+          depthWrite:  false,
+          resolution:  res.clone(),
+        });
+        this._constMaterials.set(con.abbrev, mat);
+        const lineSegs = new LineSegments2(geo, mat);
+        lineSegs.userData.abbrev = con.abbrev;
+        group.add(lineSegs);
+      }
+      if (this._constellationsVisible) this._showConstellationLabels();
+    }).catch(err => console.warn('Constellation load failed:', err));
+  }
+
+  _showConstellationLabels() {
+    this._hideConstellationLabels();
+    if (!this._constLoaded) return;
+    for (const con of this._constLoader.list()) {
+      const label = document.createElement('span');
+      label.className = 'const-label';
+      label.textContent = con.name;
+      label.dataset.abbrev = con.abbrev;
+      label.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._constModal.open(con, this.container);
+      });
+      label.addEventListener('mouseenter', () => {
+        this.starField.setHoveredStars(con.stars);
+        const mat = this._constMaterials?.get(con.abbrev);
+        if (mat) { mat.color.set(0x8dc8ff); mat.linewidth = 2.0; mat.opacity = 0.80; }
+      });
+      label.addEventListener('mouseleave', () => {
+        this.starField.setHoveredStars(null);
+        const mat = this._constMaterials?.get(con.abbrev);
+        if (mat) { mat.color.set(0x4d7daa); mat.linewidth = 1.8; mat.opacity = 0.45; }
+      });
+      this.container.appendChild(label);
+      this._constellationLabels.push(label);
+    }
+    this._updateLabelPositions();
+  }
+
+  _hideConstellationLabels() {
+    for (const el of this._constellationLabels) el.remove();
+    this._constellationLabels = [];
+  }
+
+  _updateLabelPositions() {
+    if (!this._constellationLabels.length) return;
+    const W = this.container.clientWidth;
+    const H = this.container.clientHeight;
+    const cam = this.ptz.camera;
+
+    for (const label of this._constellationLabels) {
+      const abbrev = label.dataset.abbrev;
+      const con = this._constLoader.constellations[abbrev];
+      if (!con) continue;
+
+      // Project centroid to screen
+      const v = con.centroid.clone().project(cam);
+      // v.z > 1 means it's behind the camera
+      if (v.z > 1) { label.style.display = 'none'; continue; }
+      label.style.display = '';
+      const x = (v.x * 0.5 + 0.5) * W;
+      const y = (-v.y * 0.5 + 0.5) * H;
+      label.style.left = x + 'px';
+      label.style.top  = y + 'px';
+    }
+  }
+
+  _updateConstellationOpacity() {
+    // Lines fade via screen-space shader (centre 50% → edge 0%)
+    // Labels fade by FOV: visible at all zoom levels but stronger when zoomed in
+    const fov = this.ptz._fov;
+    const t = Math.pow(1.0 - Math.min(1, Math.max(0, (fov - 10) / 60)), 1.6);
+    const labelAlpha = 0.35 + t * 0.55;
+    for (const el of this._constellationLabels) {
+      el.style.opacity = labelAlpha.toFixed(2);
+    }
   }
 
   _buildToolbar(container) {
@@ -184,7 +299,7 @@ export class SkyMapView {
       <div class="skymap-toolbar-right">
         <div class="exposure-ctrl">
           <span class="exposure-label">exp</span>
-          <input type="range" id="exposure-slider" min="0.25" max="5" step="0.05" value="1" />
+          <input type="range" id="exposure-slider" min="0.05" max="5" step="0.05" value="1" />
         </div>
         <button class="hud-btn" id="grid-btn">grid</button>
         <button class="hud-btn" id="const-btn">const.</button>
@@ -201,22 +316,16 @@ export class SkyMapView {
       <div class="pd-title">parallax rail</div>
       <div class="pd-row">
         <span class="pd-label">speed</span>
-        <input type="range" id="px-speed" min="0" max="100" value="20" step="1" />
-        <span class="pd-val" id="px-speed-val">1 AU/s</span>
-      </div>
-      <div class="pd-row">
-        <span class="pd-label">range</span>
-        <input type="range" id="px-range" min="0" max="100" value="15" step="1" />
-        <span class="pd-val" id="px-range-val">50 AU</span>
+        <input type="range" id="px-speed" min="10" max="60" value="20" step="1" />
+        <span class="pd-val" id="px-speed-val">20 lm/s</span>
       </div>
       <div class="pd-units">
         <span class="pd-unit-label">unit</span>
         <div class="pd-unit-btns">
-          <button class="hud-btn active" data-unit="AU">AU</button>
-          <button class="hud-btn" data-unit="ls">ls</button>
-          <button class="hud-btn" data-unit="lm">lm</button>
+          <button class="hud-btn active" data-unit="lm">lm</button>
           <button class="hud-btn" data-unit="lh">lh</button>
           <button class="hud-btn" data-unit="ld">ld</button>
+          <button class="hud-btn" data-unit="ly">ly</button>
         </div>
       </div>
     `;
@@ -312,27 +421,38 @@ export class SkyMapView {
       t.querySelector('#parallax-toggle').classList.toggle('active', this._parallaxOpen);
     });
 
-    const units = ['AU','ls','lm','lh','ld'];
-    const unitLabels = {
-      AU: v => `${Math.round(v)} AU/s`,
-      ls: v => `${Math.round(v)} ls/s`,
-      lm: v => `${Math.round(v)} lm/s`,
-      lh: v => `${Math.round(v)} lh/s`,
-      ld: v => `${Math.round(v)} ld/s`,
+    // Per-unit slider range and default value
+    const UNIT_RANGES = {
+      lm: { min: 10,  max: 60,  def: 20  },
+      lh: { min: 1,   max: 24,  def: 6   },
+      ld: { min: 1,   max: 365, def: 7   },
+      ly: { min: 1,   max: 10,  def: 1   },
     };
-    let activeUnit = 'AU';
-
-    this._parallaxDropdown.querySelectorAll('[data-unit]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        activeUnit = btn.dataset.unit;
-        this._parallaxDropdown.querySelectorAll('[data-unit]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this._updateSpeedLabel(activeUnit, unitLabels);
-      });
-    });
+    const unitLabel = { lm: 'lm/s', lh: 'lh/s', ld: 'ld/s', ly: 'ly/s' };
+    let activeUnit = 'lm';
 
     const speedSlider = this._parallaxDropdown.querySelector('#px-speed');
-    speedSlider.addEventListener('input', () => this._updateSpeedLabel(activeUnit, unitLabels));
+    const speedVal    = this._parallaxDropdown.querySelector('#px-speed-val');
+
+    const applyUnit = (unit) => {
+      activeUnit = unit;
+      const r = UNIT_RANGES[unit];
+      speedSlider.min   = r.min;
+      speedSlider.max   = r.max;
+      speedSlider.value = r.def;
+      speedVal.textContent = `${r.def} ${unitLabel[unit]}`;
+      this._parallaxDropdown.querySelectorAll('[data-unit]').forEach(b =>
+        b.classList.toggle('active', b.dataset.unit === unit)
+      );
+    };
+
+    this._parallaxDropdown.querySelectorAll('[data-unit]').forEach(btn => {
+      btn.addEventListener('click', () => applyUnit(btn.dataset.unit));
+    });
+
+    speedSlider.addEventListener('input', () => {
+      speedVal.textContent = `${speedSlider.value} ${unitLabel[activeUnit]}`;
+    });
 
     const applyExposure = (exp) => {
       this.starField.setExposure(exp);
@@ -352,13 +472,23 @@ export class SkyMapView {
       timeEl.textContent = this.observer.utcString;
     });
     this._cleanups.push(off);
+
+    // Constellation toggle
+    t.querySelector('#const-btn').addEventListener('click', () => {
+      this._constellationsVisible = !this._constellationsVisible;
+      t.querySelector('#const-btn').classList.toggle('active', this._constellationsVisible);
+      if (this._constellationLines) {
+        this._constellationLines.visible = this._constellationsVisible;
+      }
+      if (this._constellationsVisible) {
+        this._showConstellationLabels();
+      } else {
+        this._hideConstellationLabels();
+        this._constModal.close();
+      }
+    });
   }
 
-  _updateSpeedLabel(unit, labels) {
-    const v = parseInt(this._parallaxDropdown.querySelector('#px-speed').value);
-    const fn = labels[unit] || labels.AU;
-    this._parallaxDropdown.querySelector('#px-speed-val').textContent = fn(v);
-  }
 
   _bindEvents(container) {
     const onMove = (e) => {
@@ -374,14 +504,23 @@ export class SkyMapView {
       this._raycaster.setFromCamera(this._mouse, this.ptz.camera);
       const idx = this.starField.pick(this._raycaster, this.ptz.camera);
       if (idx >= 0) {
-        if (e.shiftKey) {
-          this.selection.toggle(idx);
-        } else {
-          this.selection.clear();
-          this.selection.select(idx);
-        }
+        // Left click: always additive — toggle star in/out of selection
+        this.selection.toggle(idx);
+      }
+    };
+
+    const onRightClick = (e) => {
+      if (e.target.closest('.hud-btn, .hud-pill, .panel, .nav-dock, .sel-bar, .parallax-dropdown')) return;
+      e.preventDefault();
+
+      this._raycaster.setFromCamera(this._mouse, this.ptz.camera);
+      const idx = this.starField.pick(this._raycaster, this.ptz.camera);
+      if (idx >= 0) {
+        // Right click on star: deselect just that star
+        this.selection.deselect(idx);
       } else {
-        if (!e.shiftKey) this.selection.clear();
+        // Right click on empty space: clear everything
+        this.selection.clear();
       }
     };
 
@@ -396,19 +535,31 @@ export class SkyMapView {
 
     container.addEventListener('mousemove', onMove);
     container.addEventListener('click', onClick);
+    container.addEventListener('contextmenu', onRightClick);
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
     this._cleanups.push(() => {
       container.removeEventListener('mousemove', onMove);
       container.removeEventListener('click', onClick);
+      container.removeEventListener('contextmenu', onRightClick);
       document.removeEventListener('keydown', onKeyDown);
       document.removeEventListener('keyup', onKeyUp);
     });
   }
 
   update(time) {
+    const dt = this._lastUpdateTime !== undefined ? time - this._lastUpdateTime : 0;
+    this._lastUpdateTime = time;
+
     this.starField.update(time);
     this.starField.setFov(this.ptz._fov);
+
+    // Update constellation label positions and line opacity based on FOV
+    if (this._constellationsVisible) {
+      this._updateLabelPositions();
+      this._updateConstellationOpacity();
+    }
+
     this.starField.updateSelection(this.selection);
 
     if (this._parallaxActive) {
@@ -421,9 +572,9 @@ export class SkyMapView {
         const speedSlider = this._parallaxDropdown?.querySelector('#px-speed');
         const speedVal    = speedSlider ? parseFloat(speedSlider.value) : 0;
         const unitBtn     = this._parallaxDropdown?.querySelector('[data-unit].active');
-        const unit        = unitBtn?.dataset.unit || 'AU';
-        const UNIT_PC     = { AU: 4.848e-6, ls: 9.716e-9, lm: 5.830e-7, lh: 3.498e-5, ld: 8.395e-4 };
-        const speedPcPerSec = speedVal * (UNIT_PC[unit] ?? UNIT_PC.AU);
+        const unit        = unitBtn?.dataset.unit || 'lm';
+        const UNIT_PC     = { lm: 5.830e-7, lh: 3.498e-5, ld: 8.395e-4, ly: 0.30660 };
+        const speedPcPerSec = speedVal * (UNIT_PC[unit] ?? UNIT_PC.lm);
         const dir = fwd ? 1 : -1;
 
         const lookDir = new THREE.Vector3();
@@ -435,6 +586,8 @@ export class SkyMapView {
           this.ptz.camera.position.set(0, 0, 0.001);
         }
       }
+
+      this._updateGhostSystem();
 
       const dispPc = this._parallaxOrigin
         ? this.ptz.camera.position.distanceTo(this._parallaxOrigin)
@@ -476,13 +629,28 @@ export class SkyMapView {
       </div>
       <div class="dev-row">
         <span class="dev-label">size min</span>
-        <input type="range" id="dev-size-min" min="0.1" max="5" step="0.1" value="1.7" />
-        <span class="dev-val" id="dev-size-min-val">1.7 px</span>
+        <input type="range" id="dev-size-min" min="0.1" max="5" step="0.1" value="1.6" />
+        <span class="dev-val" id="dev-size-min-val">1.6 px</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">size max</span>
+        <input type="range" id="dev-size-max" min="5" max="120" step="1" value="60" />
+        <span class="dev-val" id="dev-size-max-val">60 px</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">bright cap lum</span>
+        <input type="range" id="dev-bright-cap-lum" min="0.2" max="0.9" step="0.01" value="0.45" />
+        <span class="dev-val" id="dev-bright-cap-lum-val">0.45</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">bright cap px</span>
+        <input type="range" id="dev-bright-cap-size" min="5" max="60" step="1" value="11" />
+        <span class="dev-val" id="dev-bright-cap-size-val">11 px</span>
       </div>
       <div class="dev-row">
         <span class="dev-label">zoom scale</span>
-        <input type="range" id="dev-zoom" min="0" max="4" step="0.05" value="1.49" />
-        <span class="dev-val" id="dev-zoom-val">1.49</span>
+        <input type="range" id="dev-zoom" min="0" max="4" step="0.05" value="1.85" />
+        <span class="dev-val" id="dev-zoom-val">1.85</span>
       </div>
       <div class="dev-row">
         <span class="dev-label">pan tighten</span>
@@ -491,13 +659,24 @@ export class SkyMapView {
       </div>
       <div class="dev-row">
         <span class="dev-label">min bright</span>
-        <input type="range" id="dev-min-bright" min="0" max="0.5" step="0.005" value="0.165" />
-        <span class="dev-val" id="dev-min-bright-val">0.165</span>
+        <input type="range" id="dev-min-bright" min="0" max="0.5" step="0.005" value="0.130" />
+        <span class="dev-val" id="dev-min-bright-val">0.130</span>
       </div>
       <div class="dev-row">
         <span class="dev-label">exp bright comp</span>
         <input type="range" id="dev-exp-bright-comp" min="0" max="3" step="0.05" value="0.00" />
         <span class="dev-val" id="dev-exp-bright-comp-val">0.00</span>
+      </div>
+      <div class="pd-title" style="margin-top:8px">line rendering</div>
+      <div class="dev-row">
+        <span class="dev-label">thickness</span>
+        <input type="range" id="dev-line-thick" min="0.5" max="8" step="0.5" value="3.0" />
+        <span class="dev-val" id="dev-line-thick-val">1.5 px</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">opacity</span>
+        <input type="range" id="dev-line-opacity" min="0" max="1" step="0.01" value="0.24" />
+        <span class="dev-val" id="dev-line-opacity-val">0.85</span>
       </div>
     `;
     this._injectDevPanelStyles();
@@ -523,10 +702,15 @@ export class SkyMapView {
     wire('dev-ref-mag',          'dev-ref-mag-val',          v => v.toFixed(1), v => this.starField.setRefMag(v));
     wire('dev-dim-bias',         'dev-dim-bias-val',         v => v.toFixed(2), v => this.starField.setDimBias(v));
     wire('dev-size-min',         'dev-size-min-val',         v => v.toFixed(1) + ' px', v => this.starField.setSizeMin(v));
+    wire('dev-size-max',         'dev-size-max-val',         v => v.toFixed(0) + ' px', v => this.starField.setSizeMax(v));
+    wire('dev-bright-cap-lum',   'dev-bright-cap-lum-val',  v => v.toFixed(2),           v => this.starField.setBrightCapLum(v));
+    wire('dev-bright-cap-size',  'dev-bright-cap-size-val', v => v.toFixed(0) + ' px',   v => this.starField.setBrightCapSize(v));
     wire('dev-zoom',             'dev-zoom-val',             v => v.toFixed(2), v => this.starField.setZoomScale(v));
     wire('dev-pan-scale',        'dev-pan-scale-val',        v => v.toFixed(2), v => this.ptz.setPanScale(v));
     wire('dev-min-bright',       'dev-min-bright-val',       v => v.toFixed(3), v => this.starField.setMinBrightness(v));
     wire('dev-exp-bright-comp',  'dev-exp-bright-comp-val',  v => v.toFixed(2), v => this.starField.setExpBrightCompression(v));
+    wire('dev-line-thick',       'dev-line-thick-val',       v => v.toFixed(1) + ' px', v => this.starField.setLineThickness(v));
+    wire('dev-line-opacity',     'dev-line-opacity-val',     v => v.toFixed(2),           v => this.starField.setLineOpacity(v));
   }
 
   _injectDevPanelStyles() {
@@ -635,12 +819,193 @@ export class SkyMapView {
     document.head.appendChild(s);
   }
 
+  // ── Ghost star system ─────────────────────────────────────────────────────
+
+  _buildGhostSystem() {
+    if (this._ghostSystem) this._destroyGhostSystem();
+
+    // Dev constants — tune here
+    const GHOST_MIN_SIZE      = 10;   // px — smallest ring regardless of magnitude
+    const LINE_MIN_DISP       = 0.05; // pc — connector appears above this displacement
+    const LINE_FADE_START     = 5.0;  // pc — connector starts fading out
+    const LINE_FADE_END       = 20.0; // pc — connector fully gone
+    const FRESNEL_RING_RADIUS = 0.82; // 0..1 — how far from centre the ring sits
+
+    const E0    = this._parallaxOrigin.clone();
+    const count = this.catalog.starCount;
+    const cpos  = this.catalog.positions;
+    const mags  = this.catalog.magnitudes;
+    const cols  = this.catalog.colors;
+
+    // ── Precomputed per-star data (used in per-frame update) ──────────────
+    const ghostDists = new Float32Array(count); // |star - E0| in parsecs
+
+    // ── Ghost ring geometry (fixed world-space positions) ─────────────────
+    const gPos     = new Float32Array(count * 3);
+    const gColor   = new Float32Array(count * 3);
+    const gSize    = new Float32Array(count);
+
+    for (let i = 0; i < count; i++) {
+      const sx = cpos[i*3], sy = cpos[i*3+1], sz = cpos[i*3+2];
+      const dx = sx - E0.x,  dy = sy - E0.y,  dz = sz - E0.z;
+      ghostDists[i] = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+      gPos[i*3] = sx; gPos[i*3+1] = sy; gPos[i*3+2] = sz;
+
+      // Desaturate spectral colour halfway toward white → cold/phantom look
+      const r = cols[i*3], g = cols[i*3+1], b = cols[i*3+2];
+      gColor[i*3]   = r + (1 - r) * 0.55;
+      gColor[i*3+1] = g + (1 - g) * 0.55;
+      gColor[i*3+2] = b + (1 - b) * 0.55;
+
+      // Size: brighter stars get larger rings
+      gSize[i] = Math.max(GHOST_MIN_SIZE, 28 - mags[i] * 3.0);
+    }
+
+    const ghostGeo = new THREE.BufferGeometry();
+    ghostGeo.setAttribute('position', new THREE.BufferAttribute(gPos,   3));
+    ghostGeo.setAttribute('aColor',   new THREE.BufferAttribute(gColor, 3));
+    ghostGeo.setAttribute('aSize',    new THREE.BufferAttribute(gSize,  1));
+
+    const ghostMat = new THREE.ShaderMaterial({
+      vertexShader: `
+        attribute vec3  aColor;
+        attribute float aSize;
+        varying   vec3  vColor;
+        void main() {
+          vColor       = aColor;
+          gl_PointSize = aSize;
+          gl_Position  = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        uniform float uRingR;
+        void main() {
+          vec2  uv   = gl_PointCoord * 2.0 - 1.0;
+          float dist = length(uv);
+          float ring = 1.0 - smoothstep(0.0, 0.30, abs(dist - uRingR));
+          if (ring < 0.02) discard;
+          gl_FragColor = vec4(vColor, ring * 0.80);
+        }
+      `,
+      uniforms: {
+        uRingR: { value: FRESNEL_RING_RADIUS },
+      },
+      transparent: true,
+      depthWrite:  false,
+      blending:    THREE.AdditiveBlending,
+    });
+
+    const ghostPoints = new THREE.Points(ghostGeo, ghostMat);
+    ghostPoints.frustumCulled = false;
+    this.scene.add(ghostPoints);
+
+    // ── Connector line geometry (apparent positions updated per frame) ─────
+    const cLinePos = new Float32Array(count * 6); // 2 verts × 3 floats per star
+    const cLineOpa = new Float32Array(count * 2); // per-vertex opacity
+
+    const connGeo = new THREE.BufferGeometry();
+    connGeo.setAttribute('position', new THREE.BufferAttribute(cLinePos, 3));
+    connGeo.setAttribute('aOpacity', new THREE.BufferAttribute(cLineOpa, 1));
+
+    const connMat = new THREE.ShaderMaterial({
+      vertexShader: `
+        attribute float aOpacity;
+        varying   float vOpacity;
+        void main() {
+          vOpacity    = aOpacity;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying float vOpacity;
+        void main() {
+          if (vOpacity < 0.01) discard;
+          gl_FragColor = vec4(0.55, 0.75, 1.0, vOpacity * 0.55);
+        }
+      `,
+      transparent: true,
+      depthWrite:  false,
+      blending:    THREE.AdditiveBlending,
+    });
+
+    const connLines = new THREE.LineSegments(connGeo, connMat);
+    connLines.frustumCulled = false;
+    this.scene.add(connLines);
+
+    this._ghostSystem = {
+      E0, ghostDists,
+      ghostPoints, ghostGeo, ghostMat,
+      connLines, connGeo, connMat, cLinePos, cLineOpa,
+      LINE_MIN_DISP, LINE_FADE_START, LINE_FADE_END,
+    };
+  }
+
+  _destroyGhostSystem() {
+    if (!this._ghostSystem) return;
+    const s = this._ghostSystem;
+    this.scene.remove(s.ghostPoints);
+    this.scene.remove(s.connLines);
+    s.ghostGeo.dispose(); s.ghostMat.dispose();
+    s.connGeo.dispose();  s.connMat.dispose();
+    this._ghostSystem = null;
+  }
+
+  _updateGhostSystem() {
+    if (!this._ghostSystem || !this.ptz) return;
+    const {
+      E0, ghostDists,
+      ghostGeo, connGeo, cLinePos, cLineOpa,
+      LINE_MIN_DISP, LINE_FADE_START, LINE_FADE_END,
+    } = this._ghostSystem;
+
+    const Ec    = this.ptz.camera.position;
+    const count = this.catalog.starCount;
+    const cpos  = this.catalog.positions;
+
+    for (let i = 0; i < count; i++) {
+      const gx = cpos[i*3], gy = cpos[i*3+1], gz = cpos[i*3+2];
+      const d  = ghostDists[i];
+
+      // Apparent position: current camera + (direction from current cam to star) * original dist
+      const toSx = gx - Ec.x, toSy = gy - Ec.y, toSz = gz - Ec.z;
+      const toSLen = Math.sqrt(toSx*toSx + toSy*toSy + toSz*toSz) || 1;
+      const ax = Ec.x + (toSx / toSLen) * d;
+      const ay = Ec.y + (toSy / toSLen) * d;
+      const az = Ec.z + (toSz / toSLen) * d;
+
+      // Displacement: world-space distance between ghost and apparent position
+      const dispx = ax - gx, dispy = ay - gy, dispz = az - gz;
+      const disp  = Math.sqrt(dispx*dispx + dispy*dispy + dispz*dispz);
+
+      // Connector vertex positions: [ghost end, apparent end]
+      cLinePos[i*6]   = gx; cLinePos[i*6+1] = gy; cLinePos[i*6+2] = gz;
+      cLinePos[i*6+3] = ax; cLinePos[i*6+4] = ay; cLinePos[i*6+5] = az;
+
+      // Connector opacity: fade in above threshold, fade out at large displacement
+      let opa = 0;
+      if (disp > LINE_MIN_DISP) {
+        opa = Math.min(1, (disp - LINE_MIN_DISP) / LINE_MIN_DISP);
+        if (disp > LINE_FADE_START) {
+          opa *= 1 - Math.min(1, (disp - LINE_FADE_START) / (LINE_FADE_END - LINE_FADE_START));
+        }
+      }
+      cLineOpa[i*2] = cLineOpa[i*2+1] = opa;
+    }
+
+    connGeo.attributes.position.needsUpdate = true;
+    connGeo.attributes.aOpacity.needsUpdate = true;
+  }
+
   _toggleParallax() {
     this._parallaxActive = !this._parallaxActive;
     if (this._parallaxActive) {
       // Record starting position so distance bar shows displacement, not absolute position
       this._parallaxOrigin = this.ptz.camera.position.clone();
+      this._buildGhostSystem();
     } else {
+      this._destroyGhostSystem();
       this.ptz.camera.position.set(0, 0, 0.001);
       this._parallaxOrigin = null;
       this._lastTime = null;
@@ -745,6 +1110,10 @@ export class SkyMapView {
     this._devPanel?.remove();
     this._fovBar?.remove();
     this._parallaxBar?.remove();
+    this._hideConstellationLabels();
+    this._constModal.close();
+    this._destroyGhostSystem();
+    this.starField.setHoveredStars(null);
     this.ptz.camera.position.set(0, 0, 0.001);
     this.ptz?.destroy();
     if (this._constellationLines) {
