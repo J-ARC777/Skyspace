@@ -42,6 +42,10 @@ async function boot() {
   sm.scene.add(starField.points);
   sm.scene.add(starField.rings);
   sm.scene.add(starField.lineMesh);
+
+  // Normalise star point sizes to CSS pixels — gl_PointSize is in physical
+  // pixels, so without this stars appear 2× smaller on HiDPI (DPR=2) displays.
+  starField.setScale(Math.min(window.devicePixelRatio || 1, 2));
   sm.scene.background = new THREE.Color(0x080c18);
 
   selectionState.onchange((s) => starField.updateSelection(s));

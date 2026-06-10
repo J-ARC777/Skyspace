@@ -484,7 +484,9 @@ export class StarField {
   }
 
   _createStarTexture() {
-    // Fallback: bright tight core, steep dropoff — mirrors a well-exposed star sprite.
+    // Gradient fades to rgba(0,0,0,0) — NOT rgba(255,255,255,0).
+    // With unpremultiplied alpha, a white-transparent edge keeps RGB=1 so luma=1
+    // in every corner pixel, producing a visible square. Black-transparent gives luma=0.
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d');
@@ -493,15 +495,19 @@ export class StarField {
     g.addColorStop(0.07, 'rgba(255,255,255,0.92)');
     g.addColorStop(0.22, 'rgba(255,255,255,0.30)');
     g.addColorStop(0.45, 'rgba(255,255,255,0.05)');
-    g.addColorStop(1.0,  'rgba(255,255,255,0.00)');
+    g.addColorStop(1.0,  'rgba(0,0,0,0.00)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, 64, 64);
     const placeholder = new THREE.CanvasTexture(canvas);
+    placeholder.generateMipmaps = false;
+    placeholder.minFilter = THREE.LinearFilter;
 
+    const base = import.meta.env.BASE_URL;
     new THREE.TextureLoader().load(
-      '/star_2d_distance.png',
+      `${base}star_2d_distance.png`,
       (tex) => {
-        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.generateMipmaps = false;
+        tex.minFilter = THREE.LinearFilter;
         if (this.material) {
           this.material.uniforms.uMap.value.dispose();
           this.material.uniforms.uMap.value = tex;
@@ -515,7 +521,7 @@ export class StarField {
   }
 
   _createFaintTexture() {
-    // Fallback: very tight pinpoint for background/faint stars
+    // Same fix: fade to black-transparent so luma=0 at edges, no square artifact.
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d');
@@ -523,15 +529,19 @@ export class StarField {
     g.addColorStop(0,    'rgba(255,255,255,1.00)');
     g.addColorStop(0.04, 'rgba(255,255,255,0.80)');
     g.addColorStop(0.10, 'rgba(255,255,255,0.10)');
-    g.addColorStop(0.20, 'rgba(255,255,255,0.00)');
+    g.addColorStop(0.20, 'rgba(0,0,0,0.00)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, 64, 64);
     const placeholder = new THREE.CanvasTexture(canvas);
+    placeholder.generateMipmaps = false;
+    placeholder.minFilter = THREE.LinearFilter;
 
+    const base = import.meta.env.BASE_URL;
     new THREE.TextureLoader().load(
-      '/star_2d_distance_.png',
+      `${base}star_2d_distance_.png`,
       (tex) => {
-        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.generateMipmaps = false;
+        tex.minFilter = THREE.LinearFilter;
         if (this.material) {
           this.material.uniforms.uMapFaint.value.dispose();
           this.material.uniforms.uMapFaint.value = tex;
