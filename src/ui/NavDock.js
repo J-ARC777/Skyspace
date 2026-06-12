@@ -71,9 +71,9 @@ export class NavDock {
         position: absolute;
         bottom: 14px;
         left: 14px;
-        background: linear-gradient(158deg, rgba(13,14,20,0.94) 0%, rgba(8,9,15,0.97) 100%);
-        border: 0.5px solid rgba(150,158,190,0.13);
-        border-radius: 12px;
+        background: var(--c-surface);
+        border: 1px solid var(--c-border);
+        border-radius: var(--radius-lg);
         padding: 8px 10px;
         display: inline-flex;
         align-items: center;
@@ -97,26 +97,29 @@ export class NavDock {
         align-items: center;
         gap: 4px;
         padding: 6px 10px;
-        border-radius: 7px;
+        border-radius: var(--radius-sm);
+        border: 1px solid transparent;
         cursor: pointer;
-        transition: background 0.15s ease, color 0.15s ease;
-        color: rgba(175,178,190,0.42);
+        transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+        color: rgba(175,182,200,0.45);
         user-select: none;
       }
       .nav-dock-item:hover {
-        background: rgba(180,182,192,0.07);
-        color: rgba(210,212,220,0.74);
+        background: var(--c-accent-dim);
+        color: var(--c-text);
       }
       .nav-dock-item.active {
-        background: linear-gradient(135deg, rgba(24,32,80,0.55) 0%, rgba(60,20,100,0.40) 100%);
-        border: 0.5px solid rgba(130,110,200,0.38);
-        color: rgba(210,215,235,0.92);
-        box-shadow: 0 0 10px rgba(80,60,180,0.14), 0 1px 0 rgba(255,255,255,0.05) inset;
+        background: var(--c-accent-dim);
+        border: 1px solid var(--c-accent-border);
+        color: var(--c-select);
+        box-shadow: inset 0 0 0 1px rgba(96,112,240,0.22);
       }
       .nav-dock-label {
-        font-size: 9px;
-        font-family: var(--font-ui);
-        letter-spacing: 0.04em;
+        font-size: 8px;
+        font-family: var(--font-mono);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
         white-space: nowrap;
         opacity: 0;
         height: 0;

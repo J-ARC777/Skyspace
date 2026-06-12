@@ -60,8 +60,8 @@ export class SelectionBar {
         border-radius: 50%;
         flex-shrink: 0;
       }
-      .sel-star-name { font-size: 11px; color: var(--c-accent); flex: 1; }
-      .sel-star-name.primary { color: var(--c-text); }
+      .sel-star-name { font-size: 11px; color: var(--c-select); flex: 1; }
+      .sel-star-name.primary { color: var(--c-gold); font-weight: 700; }
       .sel-star-dist { font-size: 10px; color: var(--c-text-dim); }
       .sel-actions { display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap; }
       .sel-header {

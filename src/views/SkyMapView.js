@@ -553,6 +553,7 @@ export class SkyMapView {
 
     this.starField.update(time);
     this.starField.setFov(this.ptz._fov);
+    this.starField.updateMotion(this.ptz.camera);
 
     // Update constellation label positions and line opacity based on FOV
     if (this._constellationsVisible) {
@@ -648,6 +649,16 @@ export class SkyMapView {
         <span class="dev-val" id="dev-bright-cap-size-val">11 px</span>
       </div>
       <div class="dev-row">
+        <span class="dev-label">far softness</span>
+        <input type="range" id="dev-far-gauss" min="0" max="1" step="0.01" value="0.2" />
+        <span class="dev-val" id="dev-far-gauss-val">0.20</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">motion blur</span>
+        <input type="range" id="dev-motion-blur" min="0" max="2.5" step="0.05" value="0.6" />
+        <span class="dev-val" id="dev-motion-blur-val">0.60</span>
+      </div>
+      <div class="dev-row">
         <span class="dev-label">zoom scale</span>
         <input type="range" id="dev-zoom" min="0" max="4" step="0.05" value="1.85" />
         <span class="dev-val" id="dev-zoom-val">1.85</span>
@@ -666,6 +677,17 @@ export class SkyMapView {
         <span class="dev-label">exp bright comp</span>
         <input type="range" id="dev-exp-bright-comp" min="0" max="3" step="0.05" value="0.00" />
         <span class="dev-val" id="dev-exp-bright-comp-val">0.00</span>
+      </div>
+      <div class="pd-title" style="margin-top:8px">bloom</div>
+      <div class="dev-row">
+        <span class="dev-label">bloom str</span>
+        <input type="range" id="dev-bloom-str" min="0" max="1" step="0.01" value="0.34" />
+        <span class="dev-val" id="dev-bloom-str-val">0.34</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">bloom radius</span>
+        <input type="range" id="dev-bloom-rad" min="0" max="1" step="0.01" value="0.10" />
+        <span class="dev-val" id="dev-bloom-rad-val">0.10</span>
       </div>
       <div class="pd-title" style="margin-top:8px">line rendering</div>
       <div class="dev-row">
@@ -705,6 +727,10 @@ export class SkyMapView {
     wire('dev-size-max',         'dev-size-max-val',         v => v.toFixed(0) + ' px', v => this.starField.setSizeMax(v));
     wire('dev-bright-cap-lum',   'dev-bright-cap-lum-val',  v => v.toFixed(2),           v => this.starField.setBrightCapLum(v));
     wire('dev-bright-cap-size',  'dev-bright-cap-size-val', v => v.toFixed(0) + ' px',   v => this.starField.setBrightCapSize(v));
+    wire('dev-far-gauss',        'dev-far-gauss-val',        v => v.toFixed(2),           v => this.starField.setFarGaussian(v));
+    wire('dev-motion-blur',      'dev-motion-blur-val',      v => v.toFixed(2),           v => this.starField.setMotionBlur(v));
+    wire('dev-bloom-str',        'dev-bloom-str-val',        v => v.toFixed(2),           v => { if (this.sm.bloomPass) this.sm.bloomPass.strength = v; });
+    wire('dev-bloom-rad',        'dev-bloom-rad-val',        v => v.toFixed(2),           v => { if (this.sm.bloomPass) this.sm.bloomPass.radius = v; });
     wire('dev-zoom',             'dev-zoom-val',             v => v.toFixed(2), v => this.starField.setZoomScale(v));
     wire('dev-pan-scale',        'dev-pan-scale-val',        v => v.toFixed(2), v => this.ptz.setPanScale(v));
     wire('dev-min-bright',       'dev-min-bright-val',       v => v.toFixed(3), v => this.starField.setMinBrightness(v));
@@ -820,16 +846,23 @@ export class SkyMapView {
   }
 
   // ── Ghost star system ─────────────────────────────────────────────────────
+  //
+  // Visualises parallax. When the rail is engaged we freeze a *ghost* marker at
+  // each star's true 3D position — "where the star was." As the camera translates
+  // outward, an *apparent* star drifts away from its ghost, weighted by distance
+  // (nearby stars swing far, distant stars barely move), with a connector line
+  // drawn between the two. Only the apparent star moves; the ghost stays put.
 
   _buildGhostSystem() {
     if (this._ghostSystem) this._destroyGhostSystem();
 
     // Dev constants — tune here
-    const GHOST_MIN_SIZE      = 10;   // px — smallest ring regardless of magnitude
-    const LINE_MIN_DISP       = 0.05; // pc — connector appears above this displacement
-    const LINE_FADE_START     = 5.0;  // pc — connector starts fading out
-    const LINE_FADE_END       = 20.0; // pc — connector fully gone
-    const FRESNEL_RING_RADIUS = 0.82; // 0..1 — how far from centre the ring sits
+    const GHOST_SIZE     = 7;     // px — fresnel ring marker (small, like modal spheres)
+    const APPARENT_SIZE  = 5;     // px — the moving apparent star
+    const REF_DIST_PC    = 10.0;  // pc — star at this distance drifts 1:1 with camera travel
+    const MAX_FACTOR     = 8.0;   // clamp drift multiplier for very near stars
+    const LINE_MIN_DISP  = 0.02;  // pc — connector fades in above this drift
+    const LINE_FULL_DISP = 0.50;  // pc — connector reaches full opacity here
 
     const E0    = this._parallaxOrigin.clone();
     const count = this.catalog.starCount;
@@ -837,78 +870,109 @@ export class SkyMapView {
     const mags  = this.catalog.magnitudes;
     const cols  = this.catalog.colors;
 
-    // ── Precomputed per-star data (used in per-frame update) ──────────────
-    const ghostDists = new Float32Array(count); // |star - E0| in parsecs
-
-    // ── Ghost ring geometry (fixed world-space positions) ─────────────────
-    const gPos     = new Float32Array(count * 3);
-    const gColor   = new Float32Array(count * 3);
-    const gSize    = new Float32Array(count);
+    // Per-star precompute: true position, drift factor, desaturated ghost colour.
+    const truePos = new Float32Array(count * 3); // fixed ghost/anchor positions
+    const factor  = new Float32Array(count);     // distance-weighted drift multiplier
+    const gColor  = new Float32Array(count * 3); // ghost (phantom) colour
+    const aColor  = new Float32Array(count * 3); // apparent-star spectral colour
+    const aSize   = new Float32Array(count);
 
     for (let i = 0; i < count; i++) {
       const sx = cpos[i*3], sy = cpos[i*3+1], sz = cpos[i*3+2];
-      const dx = sx - E0.x,  dy = sy - E0.y,  dz = sz - E0.z;
-      ghostDists[i] = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      truePos[i*3] = sx; truePos[i*3+1] = sy; truePos[i*3+2] = sz;
 
-      gPos[i*3] = sx; gPos[i*3+1] = sy; gPos[i*3+2] = sz;
+      const dx = sx - E0.x, dy = sy - E0.y, dz = sz - E0.z;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+      factor[i] = Math.min(MAX_FACTOR, REF_DIST_PC / dist);
 
-      // Desaturate spectral colour halfway toward white → cold/phantom look
       const r = cols[i*3], g = cols[i*3+1], b = cols[i*3+2];
+      aColor[i*3] = r; aColor[i*3+1] = g; aColor[i*3+2] = b;
+      // Ghost desaturated toward cold white → reads as a phantom
       gColor[i*3]   = r + (1 - r) * 0.55;
       gColor[i*3+1] = g + (1 - g) * 0.55;
-      gColor[i*3+2] = b + (1 - b) * 0.55;
+      gColor[i*3+2] = b + (1 - b) * 0.62;
 
-      // Size: brighter stars get larger rings
-      gSize[i] = Math.max(GHOST_MIN_SIZE, 28 - mags[i] * 3.0);
+      aSize[i] = Math.max(3, APPARENT_SIZE + (2.0 - mags[i]) * 0.6);
     }
 
+    // ── Ghost markers — fixed fresnel-ring sprites at true positions ──────────
     const ghostGeo = new THREE.BufferGeometry();
-    ghostGeo.setAttribute('position', new THREE.BufferAttribute(gPos,   3));
+    ghostGeo.setAttribute('position', new THREE.BufferAttribute(truePos.slice(), 3));
     ghostGeo.setAttribute('aColor',   new THREE.BufferAttribute(gColor, 3));
-    ghostGeo.setAttribute('aSize',    new THREE.BufferAttribute(gSize,  1));
-
     const ghostMat = new THREE.ShaderMaterial({
+      uniforms: { uSize: { value: GHOST_SIZE * (Math.min(window.devicePixelRatio, 2)) } },
       vertexShader: `
-        attribute vec3  aColor;
-        attribute float aSize;
-        varying   vec3  vColor;
+        attribute vec3 aColor;
+        varying   vec3 vColor;
+        uniform   float uSize;
         void main() {
           vColor       = aColor;
-          gl_PointSize = aSize;
+          gl_PointSize = uSize;
           gl_Position  = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
       fragmentShader: `
         varying vec3 vColor;
-        uniform float uRingR;
         void main() {
-          vec2  uv   = gl_PointCoord * 2.0 - 1.0;
-          float dist = length(uv);
-          float ring = 1.0 - smoothstep(0.0, 0.30, abs(dist - uRingR));
-          if (ring < 0.02) discard;
-          gl_FragColor = vec4(vColor, ring * 0.80);
+          // Soft fresnel-style ring: bright rim, hollow centre
+          float d    = length(gl_PointCoord - 0.5) * 2.0;
+          float ring = smoothstep(0.55, 0.85, d) * (1.0 - smoothstep(0.85, 1.0, d));
+          float core = (1.0 - smoothstep(0.0, 0.35, d)) * 0.25;
+          float a    = ring + core;
+          if (a < 0.02) discard;
+          gl_FragColor = vec4(vColor, a * 0.75);
         }
       `,
-      uniforms: {
-        uRingR: { value: FRESNEL_RING_RADIUS },
-      },
       transparent: true,
       depthWrite:  false,
       blending:    THREE.AdditiveBlending,
     });
-
     const ghostPoints = new THREE.Points(ghostGeo, ghostMat);
     ghostPoints.frustumCulled = false;
     this.scene.add(ghostPoints);
 
-    // ── Connector line geometry (apparent positions updated per frame) ─────
+    // ── Apparent stars — moving spectral points (positions set per frame) ─────
+    const appPos = new Float32Array(count * 3);
+    const appGeo = new THREE.BufferGeometry();
+    appGeo.setAttribute('position', new THREE.BufferAttribute(appPos, 3));
+    appGeo.setAttribute('aColor',   new THREE.BufferAttribute(aColor, 3));
+    appGeo.setAttribute('aSize',    new THREE.BufferAttribute(aSize, 1));
+    const appMat = new THREE.ShaderMaterial({
+      uniforms: { uScale: { value: Math.min(window.devicePixelRatio, 2) } },
+      vertexShader: `
+        attribute vec3  aColor;
+        attribute float aSize;
+        varying   vec3  vColor;
+        uniform   float uScale;
+        void main() {
+          vColor       = aColor;
+          gl_PointSize = aSize * uScale;
+          gl_Position  = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        void main() {
+          float d = length(gl_PointCoord - 0.5) * 2.0;
+          float a = exp(-d * d * 4.5) + 0.6 * exp(-d * d * 40.0);
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(vColor, a);
+        }
+      `,
+      transparent: true,
+      depthWrite:  false,
+      blending:    THREE.AdditiveBlending,
+    });
+    const appPoints = new THREE.Points(appGeo, appMat);
+    appPoints.frustumCulled = false;
+    this.scene.add(appPoints);
+
+    // ── Connector lines — ghost(true) → apparent (positions set per frame) ────
     const cLinePos = new Float32Array(count * 6); // 2 verts × 3 floats per star
     const cLineOpa = new Float32Array(count * 2); // per-vertex opacity
-
     const connGeo = new THREE.BufferGeometry();
     connGeo.setAttribute('position', new THREE.BufferAttribute(cLinePos, 3));
     connGeo.setAttribute('aOpacity', new THREE.BufferAttribute(cLineOpa, 1));
-
     const connMat = new THREE.ShaderMaterial({
       vertexShader: `
         attribute float aOpacity;
@@ -922,23 +986,23 @@ export class SkyMapView {
         varying float vOpacity;
         void main() {
           if (vOpacity < 0.01) discard;
-          gl_FragColor = vec4(0.55, 0.75, 1.0, vOpacity * 0.55);
+          gl_FragColor = vec4(0.55, 0.75, 1.0, vOpacity * 0.5);
         }
       `,
       transparent: true,
       depthWrite:  false,
       blending:    THREE.AdditiveBlending,
     });
-
     const connLines = new THREE.LineSegments(connGeo, connMat);
     connLines.frustumCulled = false;
     this.scene.add(connLines);
 
     this._ghostSystem = {
-      E0, ghostDists,
+      E0, truePos, factor,
       ghostPoints, ghostGeo, ghostMat,
+      appPoints, appGeo, appMat, appPos,
       connLines, connGeo, connMat, cLinePos, cLineOpa,
-      LINE_MIN_DISP, LINE_FADE_START, LINE_FADE_END,
+      LINE_MIN_DISP, LINE_FULL_DISP,
     };
   }
 
@@ -946,8 +1010,10 @@ export class SkyMapView {
     if (!this._ghostSystem) return;
     const s = this._ghostSystem;
     this.scene.remove(s.ghostPoints);
+    this.scene.remove(s.appPoints);
     this.scene.remove(s.connLines);
     s.ghostGeo.dispose(); s.ghostMat.dispose();
+    s.appGeo.dispose();   s.appMat.dispose();
     s.connGeo.dispose();  s.connMat.dispose();
     this._ghostSystem = null;
   }
@@ -955,45 +1021,41 @@ export class SkyMapView {
   _updateGhostSystem() {
     if (!this._ghostSystem || !this.ptz) return;
     const {
-      E0, ghostDists,
-      ghostGeo, connGeo, cLinePos, cLineOpa,
-      LINE_MIN_DISP, LINE_FADE_START, LINE_FADE_END,
+      E0, truePos, factor,
+      appGeo, appPos,
+      connGeo, cLinePos, cLineOpa,
+      LINE_MIN_DISP, LINE_FULL_DISP,
     } = this._ghostSystem;
 
     const Ec    = this.ptz.camera.position;
     const count = this.catalog.starCount;
-    const cpos  = this.catalog.positions;
+
+    // Camera travel since the rail engaged. Apparent stars drift opposite to it,
+    // scaled per-star by the distance-weighted factor → stylised parallax.
+    const bx = Ec.x - E0.x, by = Ec.y - E0.y, bz = Ec.z - E0.z;
 
     for (let i = 0; i < count; i++) {
-      const gx = cpos[i*3], gy = cpos[i*3+1], gz = cpos[i*3+2];
-      const d  = ghostDists[i];
+      const gx = truePos[i*3], gy = truePos[i*3+1], gz = truePos[i*3+2];
+      const f  = factor[i];
 
-      // Apparent position: current camera + (direction from current cam to star) * original dist
-      const toSx = gx - Ec.x, toSy = gy - Ec.y, toSz = gz - Ec.z;
-      const toSLen = Math.sqrt(toSx*toSx + toSy*toSy + toSz*toSz) || 1;
-      const ax = Ec.x + (toSx / toSLen) * d;
-      const ay = Ec.y + (toSy / toSLen) * d;
-      const az = Ec.z + (toSz / toSLen) * d;
+      // Apparent position: true position pushed opposite camera travel
+      const ox = -bx * f, oy = -by * f, oz = -bz * f;
+      const ax = gx + ox, ay = gy + oy, az = gz + oz;
 
-      // Displacement: world-space distance between ghost and apparent position
-      const dispx = ax - gx, dispy = ay - gy, dispz = az - gz;
-      const disp  = Math.sqrt(dispx*dispx + dispy*dispy + dispz*dispz);
+      appPos[i*3] = ax; appPos[i*3+1] = ay; appPos[i*3+2] = az;
 
-      // Connector vertex positions: [ghost end, apparent end]
+      // Connector: ghost(true) → apparent
       cLinePos[i*6]   = gx; cLinePos[i*6+1] = gy; cLinePos[i*6+2] = gz;
       cLinePos[i*6+3] = ax; cLinePos[i*6+4] = ay; cLinePos[i*6+5] = az;
 
-      // Connector opacity: fade in above threshold, fade out at large displacement
-      let opa = 0;
-      if (disp > LINE_MIN_DISP) {
-        opa = Math.min(1, (disp - LINE_MIN_DISP) / LINE_MIN_DISP);
-        if (disp > LINE_FADE_START) {
-          opa *= 1 - Math.min(1, (disp - LINE_FADE_START) / (LINE_FADE_END - LINE_FADE_START));
-        }
-      }
+      // Drift magnitude drives connector opacity
+      const disp = Math.sqrt(ox*ox + oy*oy + oz*oz);
+      const opa  = Math.min(1, Math.max(0,
+        (disp - LINE_MIN_DISP) / (LINE_FULL_DISP - LINE_MIN_DISP)));
       cLineOpa[i*2] = cLineOpa[i*2+1] = opa;
     }
 
+    appGeo.attributes.position.needsUpdate  = true;
     connGeo.attributes.position.needsUpdate = true;
     connGeo.attributes.aOpacity.needsUpdate = true;
   }

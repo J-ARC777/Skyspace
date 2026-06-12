@@ -903,9 +903,50 @@ export class ConstellationModal {
       this._updateHoverOverlay();
     };
 
+    // ── Touch (mobile): 1-finger drag = orbit, 2-finger pinch = zoom ──────────
+    const tdist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    let tMode = null, ltx = 0, lty = 0, lpinch = 0;
+
+    const onTouchStart = (e) => {
+      this._lerpTarget = null; this._lerpOrbitTarget = null;
+      if (e.touches.length === 1) {
+        tMode = 'orbit';
+        ltx = e.touches[0].clientX; lty = e.touches[0].clientY;
+      } else if (e.touches.length >= 2) {
+        tMode = 'pinch';
+        lpinch = tdist(e.touches[0], e.touches[1]);
+      }
+      e.preventDefault();
+    };
+    const onTouchMove = (e) => {
+      e.preventDefault();
+      if (tMode === 'orbit' && e.touches.length === 1) {
+        const dx = e.touches[0].clientX - ltx, dy = e.touches[0].clientY - lty;
+        ltx = e.touches[0].clientX; lty = e.touches[0].clientY;
+        this._orbitCamera(dx, dy);
+      } else if (tMode === 'pinch' && e.touches.length >= 2) {
+        const d = tdist(e.touches[0], e.touches[1]);
+        const delta = d - lpinch; lpinch = d;
+        // fingers apart (delta > 0) → zoom in (smaller orbit radius)
+        this._orbitRadius = Math.max(0.5, this._orbitRadius * Math.pow(0.992, delta));
+        const off = this._camera.position.clone().sub(this._orbitTarget).setLength(this._orbitRadius);
+        this._camera.position.copy(this._orbitTarget).add(off);
+        this._camera.lookAt(this._orbitTarget);
+      }
+    };
+    const onTouchEnd = (e) => {
+      if (e.touches.length === 0) tMode = null;
+      else if (e.touches.length === 1) {
+        tMode = 'orbit'; ltx = e.touches[0].clientX; lty = e.touches[0].clientY;
+      }
+    };
+
     canvas.addEventListener('mousedown',  onDown);
     canvas.addEventListener('mouseleave', onLeave);
     canvas.addEventListener('wheel',      onWheel, { passive: false });
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove',  onTouchMove,  { passive: false });
+    canvas.addEventListener('touchend',   onTouchEnd);
     window.addEventListener('mousemove',  onMove);
     window.addEventListener('mouseup',    onUp);
 
@@ -913,6 +954,9 @@ export class ConstellationModal {
       canvas.removeEventListener('mousedown',  onDown);
       canvas.removeEventListener('mouseleave', onLeave);
       canvas.removeEventListener('wheel',      onWheel);
+      canvas.removeEventListener('touchstart', onTouchStart);
+      canvas.removeEventListener('touchmove',  onTouchMove);
+      canvas.removeEventListener('touchend',   onTouchEnd);
       window.removeEventListener('mousemove',  onMove);
       window.removeEventListener('mouseup',    onUp);
     };
@@ -1070,7 +1114,7 @@ export class ConstellationModal {
         position: absolute;
         z-index: 201;
         width: min(860px, 50vw);
-        background: linear-gradient(158deg, rgba(13,14,20,0.97) 0%, rgba(8,9,15,0.99) 100%);
+        background: var(--c-surface-raised);
         border: 0.5px solid var(--c-border);
         border-radius: var(--radius-md);
         overflow: hidden;
@@ -1091,10 +1135,11 @@ export class ConstellationModal {
         cursor: move;
       }
       .const-modal-title {
+        font-family: var(--font-header);
         font-size: 11px;
-        font-weight: 600;
+        font-weight: 700;
         letter-spacing: 0.10em;
-        color: var(--c-text-muted);
+        color: var(--c-text);
         text-transform: uppercase;
       }
       .const-modal-dismiss {
@@ -1106,7 +1151,7 @@ export class ConstellationModal {
         width: 100%;
         height: 50vh;
         position: relative;
-        background: #03050f;
+        background: #04050c;
         display: block;
         overflow: hidden;
         cursor: grab;

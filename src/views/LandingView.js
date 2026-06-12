@@ -54,7 +54,7 @@ export class LandingView {
         align-items: center;
         justify-content: center;
         z-index: 200;
-        background: #080c18;
+        background: radial-gradient(ellipse at 50% 40%, #0d0e15 0%, #08090e 60%, #050609 100%);
         transition: opacity 0.8s ease;
       }
       .landing-canvas {
@@ -73,38 +73,45 @@ export class LandingView {
         gap: 10px;
       }
       .landing-wordmark {
-        font-family: var(--font-ui);
-        font-size: clamp(36px, 6vw, 72px);
-        font-weight: 300;
-        letter-spacing: 0.22em;
+        font-family: var(--font-header);
+        font-size: clamp(36px, 6vw, 70px);
+        font-weight: 700;
+        letter-spacing: 0.14em;
         text-transform: uppercase;
-        color: rgba(255,255,255,0.92);
+        background: var(--gradient-accent-light);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        color: transparent;
+        filter: saturate(1.05) brightness(1.08);
       }
       .landing-sub {
-        font-family: var(--font-ui);
-        font-size: 12px;
-        letter-spacing: 0.14em;
-        color: rgba(255,255,255,0.32);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        color: var(--c-text-dim);
         text-transform: uppercase;
-        margin-bottom: 24px;
+        margin-bottom: 26px;
       }
       .landing-explore {
-        font-family: var(--font-ui);
-        font-size: 13px;
-        letter-spacing: 0.14em;
+        font-family: var(--font-mono);
+        font-weight: 700;
+        font-size: 12px;
+        letter-spacing: 0.16em;
         text-transform: uppercase;
-        color: rgba(255,255,255,0.80);
-        background: rgba(255,255,255,0.06);
-        border: 0.5px solid rgba(255,255,255,0.25);
-        border-radius: 28px;
-        padding: 11px 36px;
+        color: var(--c-text);
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--c-accent-border);
+        border-radius: var(--radius-sm);
+        padding: 11px 38px;
         cursor: pointer;
-        transition: background 0.2s, border-color 0.2s, color 0.2s;
+        transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
       }
       .landing-explore:hover {
-        background: rgba(255,255,255,0.12);
-        border-color: rgba(255,255,255,0.5);
+        background: var(--c-accent-dim);
+        border-color: var(--c-accent);
         color: #fff;
+        box-shadow: 0 0 18px rgba(80, 96, 232, 0.28);
       }
     `;
     document.head.appendChild(s);

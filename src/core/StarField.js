@@ -28,15 +28,23 @@ uniform float uRefMag;
 uniform float uDimBias;
 uniform float uZoomScale;
 uniform float uFov;
+uniform vec2  uViewport; // drawing-buffer size in physical px
+uniform mat4  uPrevViewProj; // previous frame's view-projection (for motion blur)
+uniform float uMotionBlur;
 
 varying vec3 vColor;
 varying float vSelected;
 varying float vAlpha;
 varying float vLuminance;
+varying float vDist;
+varying vec2  vStreakUV;  // motion-blur streak vector in core-uv units
+varying float vCoreRatio; // enlarged-quad / base-size ratio
+varying float vStreakMag; // streak length in px
 
 void main() {
   vColor = color;
   vSelected = aSelected;
+  vDist = aDistance;
 
   float magOk = step(aMagnitude, uMinMag);
   float distOk = step(aDistance, uMaxDist);
@@ -82,22 +90,25 @@ void main() {
 
   // Bright star floor: top ~1-2% of stars (vLuminance > 0.88) always keep a minimum glow
   // so Sirius-class stars never collapse to a point at low exposure
-  float brightFloor = mix(uSizeMin, 7.0, smoothstep(0.88, 1.0, vLuminance));
+  float brightFloor = mix(uSizeMin, 4.5, smoothstep(0.88, 1.0, vLuminance));
 
-  // Dynamic size ceiling: sits at ~9px until halfway through exposure range,
+  // Dynamic size ceiling: sits at ~6.5px until halfway through exposure range,
   // then cranks nonlinearly up to uSizeMax toward the top end.
   float expT = pow(clamp((uExposure - 0.5) / 4.5, 0.0, 1.0), 2.6);
-  float dynamicMax = mix(9.0, uSizeMax, expT);
+  float dynamicMax = mix(6.5, uSizeMax, expT);
 
-  // Bright cap also ramps from the same 9px base so bright stars grow naturally
+  // Bright cap also ramps from the same base so bright stars grow naturally
   // with exposure — they just have a lower ceiling than dim stars at max exposure.
-  float dynamicBrightCap = mix(9.0, uBrightCapSize, expT);
+  float dynamicBrightCap = mix(6.5, uBrightCapSize, expT);
   float brightCapT = smoothstep(uBrightCapLum, uBrightCapLum + 0.20, vLuminance);
   float effectiveMax = mix(dynamicMax, dynamicBrightCap, brightCapT);
 
   // Cap in pre-zoom space so relative brightness ordering is preserved.
+  // NOTE: uSizeScale (devicePixelRatio) is applied at the very end — NOT here —
+  // so all px-denominated settings (uSizeMin/uSizeMax/brightFloor/brightCap)
+  // stay in CSS-pixel space and aren't slammed into the clamp on HiDPI displays.
   float rawSize = clamp(
-    max(brightFloor, (uBaseSize + selBump) * sizeMultiplier * magSizeBoost) * uSizeScale,
+    max(brightFloor, (uBaseSize + selBump) * sizeMultiplier * magSizeBoost),
     uSizeMin, effectiveMax
   );
 
@@ -110,8 +121,47 @@ void main() {
   float hoverBoost = 1.0 + aHover * 0.55;
 
   vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = rawSize * lumZoomAdjust * hoverBoost;
+  // Final DPR scale converts CSS-pixel sizes → physical pixels uniformly.
+  // Floor at ~1.8 physical px so the faintest points never go sub-pixel (which
+  // causes shimmer/aliasing); their low alpha keeps them visually subtle.
+  float baseSize = max(rawSize * lumZoomAdjust * hoverBoost * uSizeScale, 1.8);
   gl_Position  = projectionMatrix * mvPos;
+
+  // ── Camera motion blur ────────────────────────────────────────────────────
+  // Per-star screen-space velocity from the previous frame's view-projection
+  // (model is identity for the star cloud, so worldPos = position). Stars streak
+  // along their on-screen motion; velocity-scaled, so zero blur at rest.
+  vec4  prevClip  = uPrevViewProj * vec4(position, 1.0);
+  vec2  curNDC    = gl_Position.xy / max(gl_Position.w, 1e-4);
+  vec2  prevNDC   = prevClip.xy    / max(prevClip.w,    1e-4);
+  vec2  velPx     = (curNDC - prevNDC) * 0.5 * uViewport * uMotionBlur;
+  float streakLen = length(velPx);
+  float maxStreak = 48.0;                     // px cap (also guards point-size limit)
+  if (streakLen > maxStreak) { velPx *= maxStreak / streakLen; streakLen = maxStreak; }
+
+  // Grow the sprite to hold the streak; the fragment re-centres so the core keeps
+  // its base size and averages taps along the streak.
+  // BRIGHT stars must NOT enlarge with velocity: their analytic brightness scales
+  // with the quad size (vCoreRatio), and per-frame velocity is never perfectly
+  // steady during a pan — so a velocity-driven enlargement makes them flicker.
+  // Keep their quad at base size (stable); they still streak, capped within the
+  // sprite. Faint stars enlarge fully for the long streaks (flicker invisible there).
+  float brightW  = smoothstep(uBrightCapLum, uBrightCapLum + 0.12, vLuminance);
+  float enlarged = baseSize + streakLen * (1.0 - brightW);
+  gl_PointSize = enlarged;
+  vCoreRatio   = enlarged / max(baseSize, 0.001);
+  // gl_PointCoord's Y axis points DOWN (top-left origin) while screen velocity is
+  // Y-up — flip Y so diagonal streaks run along the travel, not perpendicular.
+  vStreakUV    = vec2(velPx.x, -velPx.y) / max(baseSize, 1.0); // streak in core-uv units
+  vStreakMag   = streakLen;
+
+  // Edge fade: GL discards a point the instant its CENTRE leaves the viewport, so
+  // large sprites pop out abruptly at the canvas edge. Fade alpha as the centre
+  // approaches the edge (within ~1.5× the sprite size) so stars scroll off
+  // smoothly instead of flickering. marginNDC = sprite size expressed in NDC.
+  vec2 marginNDC = vec2(gl_PointSize * 1.5) / uViewport;
+  vec2 edge      = vec2(1.0) - smoothstep(vec2(1.0) - marginNDC, vec2(1.0), abs(curNDC));
+  vAlpha        *= edge.x * edge.y;
 }
 `;
 
@@ -120,35 +170,92 @@ varying vec3 vColor;
 varying float vSelected;
 varying float vAlpha;
 varying float vLuminance;
+varying float vDist;
+varying vec2  vStreakUV;
+varying float vCoreRatio;
+varying float vStreakMag;
 
 uniform float uExposure;
 uniform float uMinBrightness;
 uniform float uExpBrightCompression;
 uniform float uFov;
+uniform float uBrightCapLum;
+uniform float uFarGaussian;
+uniform sampler2D uStarTex;
+uniform vec3  uPrimaryTint;
 
 void main() {
   if (vAlpha < 0.01) discard;
 
-  // Analytic profile — no texture, no mip artifacts, perfect circles at every size.
-  // d: 0=centre, 1=sprite edge.
-  float d = length(gl_PointCoord - 0.5) * 2.0;
+  // Re-centre/zoom so the star core keeps its base size inside the (possibly
+  // enlarged) motion-blur quad. When motion blur is off, vCoreRatio = 1 →
+  // coreUV = gl_PointCoord (identical to the non-blurred path).
+  vec2 coreUV = (gl_PointCoord - 0.5) * vCoreRatio + 0.5;
+  float d = length(coreUV - 0.5) * 2.0;
 
-  // Faint stars: very tight Gaussian pinpoint.
-  // Bright/zoomed stars: wider halo with a punchy core.
-  float zoomBlend = clamp((15.0 - uFov) / 10.0, 0.0, 1.0);
-  float lumBlend  = smoothstep(0.2, 0.65, vLuminance);
-  float profile   = clamp(lumBlend + zoomBlend * 0.8, 0.0, 1.0);
+  float farBias = smoothstep(80.0, 1200.0, vDist) * uFarGaussian * 2.0;
+  bool  moving  = vStreakMag >= 0.75;
+  // Screen-space jitter (gl_FragCoord, NOT gl_PointCoord) dithers the streak taps
+  // into a continuous smear. Screen-space means the dither pattern is fixed to the
+  // display and doesn't crawl with the moving star → no per-frame noise/flicker.
+  float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
 
-  float tight = exp(-d * d * 18.0);             // pinpoint for faint stars
-  float wide  = exp(-d * d *  4.5)              // soft halo
-              + 0.6 * exp(-d * d * 40.0);       // bright core on top
-  float luma  = mix(tight, wide, profile);
+  // ── tight: small / faint stars → MIPMAPPED sprite ─────────────────────────
+  // These get minified (camera-distant), so the mip chain pre-filters them →
+  // no minification aliasing/shimmer. Out-of-[0,1] streak taps contribute ZERO
+  // (not the clamped edge texel) so the enlarged quad shows only the streak.
+  float tight;
+  if (!moving) {
+    tight = texture2D(uStarTex, coreUV, farBias).a;
+  } else {
+    float acc = 0.0;
+    for (int i = 0; i < 11; i++) {
+      float t   = (float(i) + jit) / 11.0 - 0.5;
+      vec2  suv = coreUV - vStreakUV * t;
+      vec2  inb = step(vec2(0.0), suv) * step(suv, vec2(1.0));
+      acc += texture2D(uStarTex, suv, farBias).a * inb.x * inb.y;
+    }
+    tight = acc / 11.0;
+  }
+
+  // ── wide: bright stars → pure ANALYTIC gaussian ───────────────────────────
+  // Bright stars are large points (never minified), so they don't need the
+  // mipmap — and using it makes them FLICKER, because a large sprite's auto-LOD
+  // wobbles as its rasterised size rounds N↔N+1 px while the camera creeps. An
+  // analytic profile has no texture LOD at all → rock-stable on slow pans.
+  // A single SMOOTH gaussian — no sub-pixel-scale core. A tight centre spike's
+  // integrated brightness wobbles with the star's sub-pixel position (and the
+  // colour-dodge + bloom amplify it), which read as intensity changing with
+  // camera angle. A smooth gaussian spread over several pixels stays stable.
+  // Coefficient stays high enough to fade before the quad edge (else it boxes).
+  float wide;
+  if (!moving) {
+    wide = exp(-d * d * 2.8);
+  } else {
+    float acc = 0.0;
+    for (int i = 0; i < 11; i++) {
+      float t  = (float(i) + jit) / 11.0 - 0.5;
+      vec2  s  = coreUV - vStreakUV * t;
+      float dd = length(s - 0.5) * 2.0;
+      acc += exp(-dd * dd * 2.8);
+    }
+    wide = acc / 11.0;
+  }
+
+  // Small mipmapped sprite up to the bright-cap luminance; brightest get the halo.
+  float profile = smoothstep(uBrightCapLum, uBrightCapLum + 0.12, vLuminance);
+  float luma    = mix(tight, wide, profile);
+
+  // Circular filter — clip anything past the (enlarged) quad's inscribed circle so
+  // the square point quad can never read as a box. The cutoff radius scales with
+  // vCoreRatio, which still contains the motion-blur streak (so streaks aren't cut).
+  luma *= 1.0 - smoothstep(vCoreRatio * 0.86, vCoreRatio, d);
 
   if (luma < 0.004) discard;
 
   // Color dodge: burns rapidly toward white at center.
   float core = pow(luma, 1.4);
-  vec3 baseCol = (vSelected > 1.5) ? vec3(1.0, 0.85, 0.4) : vColor;
+  vec3 baseCol = (vSelected > 1.5) ? uPrimaryTint : vColor;
   vec3 dodged = baseCol / max(1.0 - core * 0.75, 0.04);
   // Normalize by max channel instead of clamping — preserves hue so blue stars stay blue
   float maxChan = max(dodged.r, max(dodged.g, dodged.b));
@@ -213,6 +320,7 @@ void main() {
 
 const RING_FRAG = `
 uniform float uTime;
+uniform vec3  uSelColor;
 varying float vIsPrimary;
 
 void main() {
@@ -226,23 +334,15 @@ void main() {
   if (ring < 0.01) discard;
 
   if (vIsPrimary > 0.5) {
-    // Primary: rotating gradient — navy #091067 dominates, pink is just the leading tip
+    // Primary: solid selection colour with a subtle rotating sheen (single hue)
     float angle = atan(uv.y, uv.x);
     float raw = 0.5 + 0.5 * sin(angle - uTime * 0.56); // slowed to 40%
 
-    vec3 colDark = vec3(0.13, 0.20, 0.68);    // bright blue base
-    vec3 colPink = vec3(0.28,  0.055, 0.16);  // #941d55 darkened
-
-    // Higher exponent = blue stays dominant for more of the arc
-    float t = pow(raw, 4.0);
-    vec3 col = mix(colDark, colPink, t);
-
-    float fade = mix(0.25, 1.0, raw);
-    gl_FragColor = vec4(col, ring * fade * 0.95);
+    float fade = mix(0.5, 1.0, raw);     // gentle sheen sweep
+    gl_FragColor = vec4(uSelColor, ring * fade * 0.95);
   } else {
-    // Secondary: much darker navy
-    vec3 col = vec3(0.04, 0.06, 0.28);
-    gl_FragColor = vec4(col, ring * 0.55);
+    // Secondary: dimmer selection colour
+    gl_FragColor = vec4(uSelColor * 0.5, ring * 0.55);
   }
 }
 `;
@@ -296,6 +396,7 @@ const LINE_FRAG = `
 uniform float uMidFade;
 uniform float uTime;
 uniform float uLineOpacity;
+uniform vec3  uSelColor;
 
 varying float vT;
 varying float vV;
@@ -303,12 +404,11 @@ varying vec2  vStartScreen;
 varying vec2  vEndScreen;
 
 void main() {
-  vec3 colA = vec3(0.04, 0.06, 0.28);   // dark navy
-  vec3 colB = vec3(0.28, 0.055, 0.16);  // #941d55 magenta
-
-  // Sin wave flows along the line — no fract wrapping, no hard cuts.
+  // Single-hue selection colour, with a gentle brightness flow along the line.
+  vec3 dimC    = uSelColor * 0.42;
+  vec3 brightC = uSelColor * 1.05;
   float wave = 0.5 + 0.5 * sin((vT - uTime * 0.12) * 3.14159 * 2.0);
-  vec3 col   = mix(colA, colB, pow(wave, 1.5));
+  vec3 col   = mix(dimC, brightC, pow(wave, 1.5));
 
   // Edge softness across the line width
   float edgeT = abs(vV * 2.0 - 1.0);
@@ -348,6 +448,43 @@ export class StarField {
     this._buildLines();
   }
 
+  /**
+   * Radial-gaussian star sprite with a trilinear mipmap chain.
+   * Fades to transparent BLACK (rgba 0,0,0,0) — never white — so mip averaging
+   * doesn't bleed bright squares at the edges. The gaussian lives in the alpha
+   * channel; the fragment samples .a as the brightness profile. Mipmaps give
+   * distant/small points pre-filtered minification → no shimmer.
+   */
+  _createStarSprite() {
+    const S = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = S;
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(S, S);
+    const c = (S - 1) / 2;
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const dx = (x - c) / (S * 0.5);
+        const dy = (y - c) / (S * 0.5);
+        const r = Math.sqrt(dx * dx + dy * dy);   // 0 at centre, ~1 at edge
+        let a = Math.exp(-r * r * 6.0);            // soft radial gaussian
+        if (r > 1.0) a = 0.0;                      // hard circular cutoff
+        const i = (y * S + x) * 4;
+        img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255;
+        img.data[i + 3] = Math.round(a * 255);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.generateMipmaps = true;
+    tex.minFilter = THREE.LinearMipmapLinearFilter; // trilinear
+    tex.magFilter = THREE.LinearFilter;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
   _build() {
     const { starCount, positions, colors, magnitudes, distances } = this.catalog;
 
@@ -381,6 +518,13 @@ export class StarField {
         uExpBrightCompression:  { value: 0.00 },
         uZoomScale:        { value: 1.85 },
         uFov:              { value: 70.0 },
+        uViewport:         { value: new THREE.Vector2(window.innerWidth, window.innerHeight)
+                               .multiplyScalar(Math.min(window.devicePixelRatio || 1, 2)) },
+        uPrevViewProj:     { value: new THREE.Matrix4() },
+        uMotionBlur:       { value: 0.6 },
+        uFarGaussian:      { value: 0.2 },
+        uStarTex:          { value: this._createStarSprite() },
+        uPrimaryTint:      { value: new THREE.Color(1.0, 0.85, 0.4) },
       },
       vertexColors: true,
       transparent: true,
@@ -408,6 +552,7 @@ export class StarField {
       uniforms: {
         uSizeScale: { value: 1.0 },
         uTime:      { value: 0.0 },
+        uSelColor:  { value: new THREE.Color(0.16, 0.34, 0.95) },
       },
       transparent: true,
       depthWrite: false,
@@ -469,6 +614,7 @@ export class StarField {
         uMidFade:     { value: 0.30 },
         uLineOpacity: { value: 0.24 },
         uTime:        { value: 0.0 },
+        uSelColor:    { value: new THREE.Color(0.16, 0.34, 0.95) },
       },
       transparent: true,
       depthWrite:  false,
@@ -492,11 +638,27 @@ export class StarField {
     if (this._ringMaterial) this._ringMaterial.uniforms.uSizeScale.value = scale;
   }
 
+  /** Theme hook: colour of the selection rings + route line (r,g,b in 0–1). */
+  setSelectionColor(r, g, b) {
+    if (this._ringMaterial) this._ringMaterial.uniforms.uSelColor.value.setRGB(r, g, b);
+    if (this._lineMat)      this._lineMat.uniforms.uSelColor.value.setRGB(r, g, b);
+  }
+
+  /** Theme hook: tint of the primary-selected star point (r,g,b in 0–1). */
+  setPrimaryTint(r, g, b) {
+    this.material.uniforms.uPrimaryTint.value.setRGB(r, g, b);
+  }
+
   setLineThickness(v)         { if (this._lineMat) this._lineMat.uniforms.uThickness.value = v; }
   setLineEndFade(v)           { if (this._lineMat) this._lineMat.uniforms.uEndFade?.value !== undefined && (this._lineMat.uniforms.uEndFade.value = v); }
   setLineMidFade(v)           { if (this._lineMat) this._lineMat.uniforms.uMidFade.value = v; }
   setLineOpacity(v)           { if (this._lineMat) this._lineMat.uniforms.uLineOpacity.value = v; }
-  setResolution(w, h)         { if (this._lineMat) this._lineMat.uniforms.uResolution.value.set(w, h); }
+  setResolution(w, h) {
+    if (this._lineMat) this._lineMat.uniforms.uResolution.value.set(w, h);
+    // Points edge-fade needs the physical-pixel drawing-buffer size.
+    const pr = Math.min(window.devicePixelRatio || 1, 2);
+    this.material.uniforms.uViewport.value.set(w * pr, h * pr);
+  }
 
   /** Highlight a set of star indices on hover (pass null to clear). */
   setHoveredStars(indices) {
@@ -519,6 +681,23 @@ export class StarField {
   setDimBias(v)               { this.material.uniforms.uDimBias.value = v; }
   setZoomScale(v)             { this.material.uniforms.uZoomScale.value = v; }
   setFov(fov)                 { this.material.uniforms.uFov.value = fov; }
+  setFarGaussian(v)           { this.material.uniforms.uFarGaussian.value = v; }
+  setMotionBlur(v)            { this.material.uniforms.uMotionBlur.value = v; }
+
+  /**
+   * Per-frame camera motion for the motion-blur shader. Call once per frame from
+   * the active view BEFORE the scene renders. Stores the previous frame's
+   * view-projection so the shader can derive each star's screen velocity.
+   */
+  updateMotion(camera) {
+    if (!this._curViewProj) { this._curViewProj = new THREE.Matrix4(); this._tmpViewProj = new THREE.Matrix4(); }
+    camera.updateMatrixWorld();
+    this._tmpViewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    // On the first frame (or a camera switch) seed both so velocity starts at 0.
+    if (this._motionCam !== camera) { this._motionCam = camera; this._curViewProj.copy(this._tmpViewProj); }
+    this.material.uniforms.uPrevViewProj.value.copy(this._curViewProj);
+    this._curViewProj.copy(this._tmpViewProj);
+  }
   setMinBrightness(v)         { this.material.uniforms.uMinBrightness.value = v; }
   setExpBrightCompression(v)  { this.material.uniforms.uExpBrightCompression.value = v; }
 

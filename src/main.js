@@ -14,6 +14,8 @@ import { ObserverState }    from './core/ObserverState.js';
 
 import { LandingView }  from './views/LandingView.js';
 import { SkyMapView }   from './views/SkyMapView.js';
+import { StarMapView }  from './views/StarMapView.js';
+import { StarDetailView } from './views/StarDetailView.js';
 
 import { NavDock }      from './ui/NavDock.js';
 import { SelectionBar } from './ui/SelectionBar.js';
@@ -25,7 +27,7 @@ async function boot() {
   loadEl.style.cssText = `
     position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     font-family:var(--font-ui);font-size:12px;letter-spacing:0.1em;
-    color:rgba(255,255,255,0.3);text-transform:uppercase;z-index:999;background:#070910;
+    color:rgba(221,227,238,0.4);text-transform:uppercase;z-index:999;background:#06070e;
   `;
   loadEl.textContent = 'loading catalog…';
   appEl.appendChild(loadEl);
@@ -45,10 +47,17 @@ async function boot() {
 
   // Normalise star point sizes to CSS pixels — gl_PointSize is in physical
   // pixels, so without this stars appear 2× smaller on HiDPI (DPR=2) displays.
-  starField.setScale(Math.min(window.devicePixelRatio || 1, 2));
-  sm.scene.background = new THREE.Color(0x080c18);
+  // GLOBAL_STAR_SCALE is a single global size lever (0.6 = 40% smaller).
+  const GLOBAL_STAR_SCALE = 0.6;
+  starField.setScale(Math.min(window.devicePixelRatio || 1, 2) * GLOBAL_STAR_SCALE);
+  sm.scene.background = new THREE.Color(0x08090e);
 
   selectionState.onchange((s) => starField.updateSelection(s));
+
+  // Selection colours: sky-blue highlight for selected stars + route line,
+  // amber for the primary ("you are here") marker.
+  starField.setSelectionColor(0.478, 0.690, 0.878);
+  starField.setPrimaryTint(0.94, 0.72, 0.25);
 
   let navDock = null;
   let selBar  = null;
@@ -70,20 +79,29 @@ async function boot() {
     if (view === VIEWS.LANDING) return;
     mountChrome();
 
+    const viewArgs = {
+      scene: sm.scene,
+      sceneManager: sm,
+      starField,
+      catalog,
+      selection: selectionState,
+      observer,
+      viewState,
+    };
+
     if (view === VIEWS.SKYMAP) {
-      activeView = new SkyMapView({
-        scene: sm.scene,
-        sceneManager: sm,
-        starField,
-        catalog,
-        selection: selectionState,
-        observer,
-        viewState,
-      });
+      activeView = new SkyMapView(viewArgs);
+      activeView.mount(appEl);
+      updateOff = sm.onUpdate((t) => activeView?.update(t));
+    } else if (view === VIEWS.STARMAP) {
+      activeView = new StarMapView(viewArgs);
+      activeView.mount(appEl);
+      updateOff = sm.onUpdate((t) => activeView?.update(t));
+    } else if (view === VIEWS.STARDETAIL) {
+      activeView = new StarDetailView(viewArgs);
       activeView.mount(appEl);
       updateOff = sm.onUpdate((t) => activeView?.update(t));
     }
-    // STARMAP + STARDETAIL added in next build phases
   }
 
   viewState.onchange(({ current }) => gotoView(current));

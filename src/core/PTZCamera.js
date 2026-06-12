@@ -72,21 +72,44 @@ export class PTZCamera {
   }
 
   _onTouchStart(e) {
+    if (e.target.closest('.panel, .nav-dock, .sel-bar, .skymap-toolbar, .const-label, .const-modal, input, button')) return;
     if (e.touches.length === 1) {
       this._dragging = true;
       this._lastX = e.touches[0].clientX;
       this._lastY = e.touches[0].clientY;
+    } else if (e.touches.length >= 2) {
+      this._dragging = false;
+      this._pinchDist = this._touchDist(e);
     }
   }
 
   _onTouchMove(e) {
     e.preventDefault();
+    // Two-finger pinch → FOV zoom
+    if (e.touches.length >= 2) {
+      const d = this._touchDist(e);
+      const delta = d - (this._pinchDist || d);
+      this._pinchDist = d;
+      // fingers apart (delta > 0) → zoom in (smaller FOV)
+      this._fov = Math.max(0.5, Math.min(90, this._fov * Math.pow(0.992, delta)));
+      this.camera.fov = this._fov;
+      this.camera.updateProjectionMatrix();
+      this._fovListeners.forEach(fn => fn(this._fov));
+      return;
+    }
     if (!this._dragging || e.touches.length !== 1) return;
     const dx = e.touches[0].clientX - this._lastX;
     const dy = e.touches[0].clientY - this._lastY;
     this._lastX = e.touches[0].clientX;
     this._lastY = e.touches[0].clientY;
     this._pan(dx, dy);
+  }
+
+  _touchDist(e) {
+    return Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY,
+    );
   }
 
   _pan(dx, dy) {

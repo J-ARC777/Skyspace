@@ -104,7 +104,7 @@ export class SceneManager {
     this.composer.addPass(this.rayleighPass);
 
     // Bloom (pass 3)
-    this.bloomPass = new UnrealBloomPass(size, 0.4, 0.3, 0.85);
+    this.bloomPass = new UnrealBloomPass(size, 0.34, 0.10, 0.85);
     this.composer.addPass(this.bloomPass);
 
     // Output / tone mapping (pass 4)
@@ -135,6 +135,12 @@ export class SceneManager {
     this.rayleighPass.uniforms.uEnabled.value = enabled ? 1.0 : 0.0;
     this.rayleighPass.uniforms.uHorizonY.value = horizonY;
     this.rayleighPass.uniforms.uStrength.value = strength;
+  }
+
+  /** Enable/disable the bloom pass (kept in the pipeline; only some views use it). */
+  setBloom(enabled, strength) {
+    this.bloomPass.enabled = enabled;
+    if (strength !== undefined) this.bloomPass.strength = strength;
   }
 
   onUpdate(fn) {

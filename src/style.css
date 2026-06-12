@@ -1,43 +1,58 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --font-ui: 'Outfit', sans-serif;
-  --font-mono: 'Space Mono', monospace;
+  /* Montserrat for headers/titles; B612 for info text; B612 Mono for data readouts. */
+  --font-header: 'Montserrat', sans-serif;
+  --font-ui: 'B612', sans-serif;
+  --font-mono: 'B612 Mono', monospace;
 
-  /* Backgrounds */
-  --c-bg: #080c18;
-  --c-surface: rgba(20, 26, 54, 0.72);
-  --c-surface-raised: rgba(22, 28, 58, 0.88);
+  /* Backgrounds — neutral near-black (no blue fill; accent lives in linework) */
+  --c-bg: #08090e;
+  --c-bg-deep: #050609;
+  --c-surface: rgba(15, 16, 21, 0.84);
+  --c-surface-raised: rgba(20, 22, 28, 0.93);
 
-  /* Borders */
-  --c-border: rgba(150, 158, 190, 0.13);
-  --c-border-subtle: rgba(140, 148, 180, 0.07);
-  --c-border-bright: rgba(160, 168, 210, 0.26);
+  /* Borders — faint royal-blue linework */
+  --c-border: rgba(100, 120, 230, 0.18);
+  --c-border-subtle: rgba(100, 120, 230, 0.09);
+  --c-border-bright: rgba(120, 142, 240, 0.40);
 
-  /* Text */
-  --c-text: rgba(236, 238, 244, 0.93);
-  --c-text-muted: rgba(192, 195, 206, 0.58);
-  --c-text-dim: rgba(150, 153, 162, 0.36);
+  /* Text — Primary (lavender-white) / Secondary (blue-grey) / Tertiary (slate) */
+  --c-text: rgba(232, 234, 243, 0.96);
+  --c-text-muted: rgba(174, 191, 212, 0.72);
+  --c-text-dim: rgba(122, 132, 153, 0.55);
 
-  /* Accent — blue→purple→pink gradient */
-  --gradient-accent: linear-gradient(90deg, #2244ee 0%, #9922cc 55%, #ee2288 100%);
-  --gradient-accent-diagonal: linear-gradient(135deg, #2244ee 0%, #9922cc 55%, #ee2288 100%);
+  /* Accent 1 — royal blue (dominant, 70%) */
+  --c-accent: rgba(80, 96, 232, 1);
+  --c-accent-strong: rgba(59, 68, 216, 1);
+  --c-accent-dim: rgba(80, 96, 232, 0.16);
+  --c-accent-border: rgba(96, 112, 240, 0.55);
 
-  /* Accent flat fallbacks */
-  --c-accent: rgba(100, 148, 255, 1);
-  --c-accent-dim: rgba(60, 90, 220, 0.14);
-  --c-accent-border: rgba(80, 120, 255, 0.35);
+  /* Accent 2 — crimson (secondary, 30%) */
+  --c-crimson: rgba(196, 31, 84, 1);
+  --c-crimson-dim: rgba(196, 31, 84, 0.18);
+  --c-crimson-border: rgba(210, 60, 104, 0.5);
 
-  /* Gold / primary selection */
-  --c-gold: rgba(255, 210, 100, 1);
-  --c-gold-dim: rgba(255, 210, 100, 0.13);
-  --c-gold-border: rgba(255, 210, 100, 0.32);
+  /* Selection / highlight — sky blue (primary), amber (uncommon) */
+  --c-select: rgba(122, 176, 224, 1);
+  --c-select-dim: rgba(122, 176, 224, 0.16);
+  --c-select-border: rgba(140, 190, 235, 0.55);
 
-  /* Radii */
-  --radius-sm: 6px;
-  --radius-md: 9px;
-  --radius-lg: 12px;
-  --transition: 0.18s ease;
+  /* Amber — uncommon highlight / primary-star marker */
+  --c-gold: rgba(240, 184, 64, 1);
+  --c-gold-dim: rgba(240, 184, 64, 0.14);
+  --c-gold-border: rgba(240, 184, 64, 0.40);
+
+  /* Decorative accent gradient — royal blue → crimson (used sparingly) */
+  --gradient-accent: linear-gradient(90deg, #3b44d8 0%, #7a3cc0 55%, #c41f54 100%);
+  --gradient-accent-diagonal: linear-gradient(135deg, #3b44d8 0%, #7a3cc0 55%, #c41f54 100%);
+  --gradient-accent-light: linear-gradient(90deg, #6a78ec 0%, #9a6ad8 55%, #e85a86 100%);
+
+  /* Radii — subtle rounding */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --transition: 0.16s ease;
 }
 
 html, body {
@@ -61,49 +76,47 @@ canvas {
   position: absolute;
   top: 0; left: 0;
   width: 100%; height: 100%;
+  touch-action: none; /* gestures handled by our own touch logic */
 }
 
-/* ── Panel (glassmorphism base) ── */
+/* ── Panel — flat neutral near-black, accent lives in the border linework ── */
 .panel {
-  background: linear-gradient(
-    158deg,
-    rgba(13, 14, 20, 0.94) 0%,
-    rgba(8,  9,  15, 0.97) 100%
-  );
-  border: 0.5px solid var(--c-border);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
   border-radius: var(--radius-md);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.04) inset,
-    0 6px 28px rgba(0, 0, 0, 0.50);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 6px 26px rgba(0, 0, 0, 0.55);
 }
 
-/* ── HUD pill ── */
+/* ── HUD pill — technical mono readout, near-rectangular ── */
 .hud-pill {
-  background: rgba(255,255,255,0.04);
-  border: 0.5px solid var(--c-border);
-  border-radius: 20px;
-  padding: 4px 11px;
-  font-size: 11px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
   color: var(--c-text-muted);
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
+  font-weight: 700;
   white-space: nowrap;
 }
 
-/* ── HUD button ── */
+/* ── HUD button — outlined; active state carries accent in the linework ── */
 .hud-btn {
-  background: rgba(255,255,255,0.04);
-  border: 0.5px solid var(--c-border);
+  background: rgba(255,255,255,0.025);
+  border: 1px solid var(--c-border);
   border-radius: var(--radius-sm);
   padding: 5px 11px;
   font-size: 11px;
   color: var(--c-text-muted);
   cursor: pointer;
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
+  font-weight: 700;
   transition:
     background var(--transition),
     border-color var(--transition),
@@ -111,28 +124,26 @@ canvas {
     box-shadow var(--transition);
   white-space: nowrap;
   user-select: none;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
 }
 .hud-btn:hover {
-  background: rgba(180, 188, 220, 0.07);
-  border-color: var(--c-border-bright);
+  background: var(--c-accent-dim);
+  border-color: var(--c-accent-border);
   color: var(--c-text);
 }
 .hud-btn.active {
-  background: linear-gradient(135deg, rgba(24, 32, 80, 0.55) 0%, rgba(60, 20, 100, 0.40) 100%);
-  border-color: rgba(130, 110, 200, 0.38);
-  color: rgba(190, 200, 240, 0.92);
-  box-shadow:
-    0 0 10px rgba(80, 60, 180, 0.14),
-    0 1px 0 rgba(255,255,255,0.05) inset;
+  background: var(--c-accent-dim);
+  border-color: var(--c-accent-border);
+  color: var(--c-select);
+  box-shadow: inset 0 0 0 1px rgba(96, 112, 240, 0.25);
 }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(100,120,255,0.15); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: var(--c-accent-dim); border-radius: 2px; }
 
 /* ── Range inputs ── */
 input[type=range] {
-  accent-color: rgba(100, 148, 255, 0.85);
+  accent-color: var(--c-accent);
 }
