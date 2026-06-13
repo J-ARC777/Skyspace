@@ -693,11 +693,12 @@ export class ConstellationModal {
     // This keeps the arrows aligned to world space as seen from the camera.
     this._axisGroup.quaternion.copy(this._camera.quaternion).invert();
 
-    const dpr  = this._renderer.getPixelRatio();
-    const rw   = this._renderer.domElement.width;
-    const rh   = this._renderer.domElement.height;
-    const SIZE = Math.round(80 * dpr);
-    const PAD  = Math.round(14 * dpr);
+    // setViewport/setScissor expect CSS pixels; using domElement.width (physical)
+    // would cause dpr² scaling. Derive CSS dimensions from the canvas element.
+    const W    = this._canvas.clientWidth;
+    const H    = this._canvas.clientHeight;
+    const SIZE = 80;
+    const PAD  = 14;
 
     this._renderer.setScissorTest(true);
     this._renderer.setScissor(PAD, PAD, SIZE, SIZE);
@@ -707,7 +708,7 @@ export class ConstellationModal {
     this._renderer.render(this._axisScene, this._axisCamera);
     this._renderer.autoClear = true;
     this._renderer.setScissorTest(false);
-    this._renderer.setViewport(0, 0, rw, rh);
+    this._renderer.setViewport(0, 0, W, H);
   }
 
   _buildRenderer() {

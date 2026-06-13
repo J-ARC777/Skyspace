@@ -76,6 +76,10 @@ export class StarMapView {
     this.sm.setRayleigh(false);
     this.starField.setResolution(container.clientWidth, container.clientHeight);
 
+    // Fixed exposure independent of whatever the SkyMap exposure slider was set to.
+    this.starField.setExposure(0.5);
+    this.starField.setBaseSize(2.6);
+
     // React to selection changes (route, markers, aim).
     const off = this.selection.onchange(this._onSelectionChange);
     this._cleanups.push(off);
@@ -588,16 +592,18 @@ export class StarMapView {
     const renderer = this.sm.renderer;
     this._axisGroup.quaternion.copy(this.camera.quaternion).invert();
 
-    const dpr  = renderer.getPixelRatio();
-    const rw   = renderer.domElement.width;
-    const rh   = renderer.domElement.height;
-    const SIZE = Math.round(80 * dpr);
-    const PAD  = Math.round(14 * dpr);
+    // Three.js setViewport/setScissor expect CSS pixels — it applies pixelRatio
+    // internally. Using domElement.width (physical pixels) here would set the
+    // stored viewport to physicalPx * dpr = dpr² × css, causing the main scene
+    // to render to only the bottom-left (1/dpr²) fraction of the canvas.
+    const W    = this.container.clientWidth;
+    const H    = this.container.clientHeight;
+    const SIZE = 80;
+    const PAD  = 14;
 
-    // Top-right, tucked under the recenter button — clear of the NavDock
-    // (bottom-left) and SelectionBar (bottom-right) DOM overlays.
-    const x = rw - SIZE - PAD;
-    const y = rh - SIZE - Math.round(52 * dpr);
+    // Top-right, tucked under the recenter button (y=0 is bottom in WebGL).
+    const x = W - SIZE - PAD;
+    const y = H - SIZE - 52;
 
     renderer.setScissorTest(true);
     renderer.setScissor(x, y, SIZE, SIZE);
@@ -607,7 +613,7 @@ export class StarMapView {
     renderer.render(this._axisScene, this._axisCamera);
     renderer.autoClear = true;
     renderer.setScissorTest(false);
-    renderer.setViewport(0, 0, rw, rh);
+    renderer.setViewport(0, 0, W, H);
   }
 
   // ── HUD ─────────────────────────────────────────────────────────────────────

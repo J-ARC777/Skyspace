@@ -103,8 +103,9 @@ export class SceneManager {
     this.rayleighPass = new ShaderPass(RayleighShader);
     this.composer.addPass(this.rayleighPass);
 
-    // Bloom (pass 3)
+    // Bloom (pass 3) — disabled in favour of analytical bloom in StarField
     this.bloomPass = new UnrealBloomPass(size, 0.34, 0.10, 0.85);
+    this.bloomPass.enabled = false;
     this.composer.addPass(this.bloomPass);
 
     // Output / tone mapping (pass 4)

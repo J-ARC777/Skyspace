@@ -18,147 +18,73 @@ uniform float uMinMag;
 uniform float uMaxDist;
 uniform float uSizeScale;
 uniform float uSizeMin;
-uniform float uExposure;
-uniform float uBaseSize;
-uniform float uBleedFactor;
 uniform float uSizeMax;
-uniform float uBrightCapLum;
-uniform float uBrightCapSize;
-uniform float uRefMag;
-uniform float uDimBias;
-uniform float uZoomScale;
+uniform float uTightBaseSize;
+uniform float uWideBaseSize;
+uniform float uBodyMagMin;
+uniform float uBodyMagMax;
 uniform float uFov;
-uniform vec2  uViewport; // drawing-buffer size in physical px
-uniform mat4  uPrevViewProj; // previous frame's view-projection (for motion blur)
+uniform vec2  uViewport;
+uniform mat4  uPrevViewProj;
 uniform float uMotionBlur;
 
-varying vec3 vColor;
+varying vec3  vColor;
 varying float vSelected;
 varying float vAlpha;
+varying float vBodyBlend;
 varying float vLuminance;
-varying float vDist;
-varying vec2  vStreakUV;  // motion-blur streak vector in core-uv units
-varying float vCoreRatio; // enlarged-quad / base-size ratio
-varying float vStreakMag; // streak length in px
+varying vec2  vStreakUV;
+varying float vCoreRatio;
+varying float vStreakMag;
 
 void main() {
-  vColor = color;
+  vColor    = color;
   vSelected = aSelected;
-  vDist = aDistance;
 
-  float magOk = step(aMagnitude, uMinMag);
+  float magOk  = step(aMagnitude, uMinMag);
   float distOk = step(aDistance, uMaxDist);
-  vAlpha = magOk * distOk * aVisible;
 
-  // Pogson log scale — vLuminance passed to frag for brightness
+  // Pogson luminance — used by fragment for bloom threshold
   float flux = exp(-0.92103 * aMagnitude);
   vLuminance = clamp(pow(flux * 4.0, 0.45), 0.0, 1.0);
 
-  // FOV zoom curve: flat ≥15°, grows toward 5°
-  float fovFactor = 15.0 / clamp(uFov, 5.0, 15.0);
-  float zoomAdjust = pow(fovFactor, uZoomScale);
+  // Body blend: 0 = full wide (bright/low mag), 1 = full tight (dim/high mag)
+  vBodyBlend = smoothstep(uBodyMagMin, uBodyMagMax, aMagnitude);
 
-  // Stop-based size from apparent magnitude.
-  // Pogson: 5 mag = 100× = 6.644 stops → 1.329 stops per magnitude.
-  float starStops     = (uRefMag - aMagnitude) * 1.329;
-  // Wider range: 4.0 multiplier gives −3.8 stops at exp=0.05 (blue hour) and +28 at exp=8 (Hubble)
-  float exposureStops = (uExposure - 1.0) * 4.0;
-  float totalStops    = exposureStops + starStops;
-
-  // Dim bias: lift stars dimmer than refMag slightly without inverting ordering.
-  float dimBias        = uDimBias * max(0.0, -starStops);
-  float effectiveStops = max(0.0, totalStops + dimBias);
-
-  // Smooth visibility fade: stars roll off as they approach the exposure threshold
-  // rather than snapping on/off. 1.5 roll = ~0.67 stops of fade width.
-  float visWeight = clamp(totalStops * 1.5 + 1.0, 0.0, 1.0);
+  // Smooth fade near the magnitude cutoff
+  float visWeight = clamp((uMinMag - aMagnitude) * 1.5 + 1.0, 0.0, 1.0);
   vAlpha = magOk * distOk * aVisible * visWeight;
 
-  // Exponential size growth with stops above threshold.
-  float sizeMultiplier = exp2(effectiveStops * uBleedFactor);
-
-  // Selected stars get a small additive bump.
-  float selBump = float(aSelected > 0.5) * 1.2;
-
-  // Magnitude-based size variation for background/faint stars.
-  // Faint stars all hit effectiveStops=0 and become identical — this lifts them
-  // nonlinearly by magnitude so brighter-faint stars are visibly larger.
-  // Only opens up at higher exposures so they stay hidden at blue-hour end.
-  float exposureT  = clamp((uExposure - 0.5) / 1.5, 0.0, 1.0);
-  float faintMaskS = 1.0 - smoothstep(0.55, 0.85, vLuminance); // exclude already-bright stars
-  float magSizeBoost = 1.0 + pow(vLuminance, 0.6) * 1.3 * exposureT * faintMaskS;
-
-  // Bright star floor: top ~1-2% of stars (vLuminance > 0.88) always keep a minimum glow
-  // so Sirius-class stars never collapse to a point at low exposure
-  float brightFloor = mix(uSizeMin, 4.5, smoothstep(0.88, 1.0, vLuminance));
-
-  // Dynamic size ceiling: sits at ~6.5px until halfway through exposure range,
-  // then cranks nonlinearly up to uSizeMax toward the top end.
-  float expT = pow(clamp((uExposure - 0.5) / 4.5, 0.0, 1.0), 2.6);
-  float dynamicMax = mix(6.5, uSizeMax, expT);
-
-  // Bright cap also ramps from the same base so bright stars grow naturally
-  // with exposure — they just have a lower ceiling than dim stars at max exposure.
-  float dynamicBrightCap = mix(6.5, uBrightCapSize, expT);
-  float brightCapT = smoothstep(uBrightCapLum, uBrightCapLum + 0.20, vLuminance);
-  float effectiveMax = mix(dynamicMax, dynamicBrightCap, brightCapT);
-
-  // Cap in pre-zoom space so relative brightness ordering is preserved.
-  // NOTE: uSizeScale (devicePixelRatio) is applied at the very end — NOT here —
-  // so all px-denominated settings (uSizeMin/uSizeMax/brightFloor/brightCap)
-  // stay in CSS-pixel space and aren't slammed into the clamp on HiDPI displays.
-  float rawSize = clamp(
-    max(brightFloor, (uBaseSize + selBump) * sizeMultiplier * magSizeBoost),
-    uSizeMin, effectiveMax
-  );
-
-  // Luminance-weighted zoom: bright stars get full zoomAdjust, dim stars get much less
-  // so they don't race past the cap and overtake brighter stars when zooming in.
-  float lumZoomWeight = smoothstep(0.15, 0.65, vLuminance);
-  float lumZoomAdjust = mix(1.0, zoomAdjust, lumZoomWeight);
-
-  // Hover boost: scale up stars belonging to the hovered constellation
+  // Size scales continuously with luminance between the two base sizes
+  float baseSize  = mix(uTightBaseSize, uWideBaseSize, vLuminance);
+  float selBump   = float(aSelected > 0.5) * 1.2;
   float hoverBoost = 1.0 + aHover * 0.55;
+  float rawSize   = clamp(baseSize + selBump, uSizeMin, uSizeMax);
+
+  // FOV zoom: flat ≥15°, grows toward 5°
+  float fovFactor = 15.0 / clamp(uFov, 5.0, 15.0);
 
   vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-  // Final DPR scale converts CSS-pixel sizes → physical pixels uniformly.
-  // Floor at ~1.8 physical px so the faintest points never go sub-pixel (which
-  // causes shimmer/aliasing); their low alpha keeps them visually subtle.
-  float baseSize = max(rawSize * lumZoomAdjust * hoverBoost * uSizeScale, 1.8);
-  gl_Position  = projectionMatrix * mvPos;
+  gl_Position = projectionMatrix * mvPos;
 
-  // ── Camera motion blur ────────────────────────────────────────────────────
-  // Per-star screen-space velocity from the previous frame's view-projection
-  // (model is identity for the star cloud, so worldPos = position). Stars streak
-  // along their on-screen motion; velocity-scaled, so zero blur at rest.
+  float physSize = max(rawSize * fovFactor * hoverBoost * uSizeScale, 1.8);
+
+  // Motion blur — screen-space velocity from previous frame view-projection
   vec4  prevClip  = uPrevViewProj * vec4(position, 1.0);
-  vec2  curNDC    = gl_Position.xy / max(gl_Position.w, 1e-4);
-  vec2  prevNDC   = prevClip.xy    / max(prevClip.w,    1e-4);
+  vec2  curNDC    = gl_Position.xy / max(gl_Position.w,  1e-4);
+  vec2  prevNDC   = prevClip.xy    / max(prevClip.w,     1e-4);
   vec2  velPx     = (curNDC - prevNDC) * 0.5 * uViewport * uMotionBlur;
   float streakLen = length(velPx);
-  float maxStreak = 48.0;                     // px cap (also guards point-size limit)
+  float maxStreak = 48.0;
   if (streakLen > maxStreak) { velPx *= maxStreak / streakLen; streakLen = maxStreak; }
 
-  // Grow the sprite to hold the streak; the fragment re-centres so the core keeps
-  // its base size and averages taps along the streak.
-  // BRIGHT stars must NOT enlarge with velocity: their analytic brightness scales
-  // with the quad size (vCoreRatio), and per-frame velocity is never perfectly
-  // steady during a pan — so a velocity-driven enlargement makes them flicker.
-  // Keep their quad at base size (stable); they still streak, capped within the
-  // sprite. Faint stars enlarge fully for the long streaks (flicker invisible there).
-  float brightW  = smoothstep(uBrightCapLum, uBrightCapLum + 0.12, vLuminance);
-  float enlarged = baseSize + streakLen * (1.0 - brightW);
+  float enlarged = physSize + streakLen;
   gl_PointSize = enlarged;
-  vCoreRatio   = enlarged / max(baseSize, 0.001);
-  // gl_PointCoord's Y axis points DOWN (top-left origin) while screen velocity is
-  // Y-up — flip Y so diagonal streaks run along the travel, not perpendicular.
-  vStreakUV    = vec2(velPx.x, -velPx.y) / max(baseSize, 1.0); // streak in core-uv units
+  vCoreRatio   = enlarged / max(physSize, 0.001);
+  vStreakUV    = vec2(velPx.x, -velPx.y) / max(physSize, 1.0);
   vStreakMag   = streakLen;
 
-  // Edge fade: GL discards a point the instant its CENTRE leaves the viewport, so
-  // large sprites pop out abruptly at the canvas edge. Fade alpha as the centre
-  // approaches the edge (within ~1.5× the sprite size) so stars scroll off
-  // smoothly instead of flickering. marginNDC = sprite size expressed in NDC.
+  // Edge fade so sprites don't pop at canvas boundary
   vec2 marginNDC = vec2(gl_PointSize * 1.5) / uViewport;
   vec2 edge      = vec2(1.0) - smoothstep(vec2(1.0) - marginNDC, vec2(1.0), abs(curNDC));
   vAlpha        *= edge.x * edge.y;
@@ -166,137 +92,97 @@ void main() {
 `;
 
 const FRAG = `
-varying vec3 vColor;
+varying vec3  vColor;
 varying float vSelected;
 varying float vAlpha;
+varying float vBodyBlend;
 varying float vLuminance;
-varying float vDist;
 varying vec2  vStreakUV;
 varying float vCoreRatio;
 varying float vStreakMag;
 
 uniform float uExposure;
-uniform float uMinBrightness;
-uniform float uExpBrightCompression;
-uniform float uFov;
-uniform float uBrightCapLum;
-uniform float uFarGaussian;
 uniform sampler2D uStarTex;
+uniform sampler2D uStarTexWide;
+uniform float uTexGamma;
+uniform float uBloomScale;
+uniform float uBloomFadeBase;
+uniform float uBloomLumMin;
+uniform float uBloomLumMax;
+uniform float uBloomGamma;
 uniform vec3  uPrimaryTint;
+uniform float uTightCrop;
 
 void main() {
   if (vAlpha < 0.01) discard;
 
-  // Re-centre/zoom so the star core keeps its base size inside the (possibly
-  // enlarged) motion-blur quad. When motion blur is off, vCoreRatio = 1 →
-  // coreUV = gl_PointCoord (identical to the non-blurred path).
-  vec2 coreUV = (gl_PointCoord - 0.5) * vCoreRatio + 0.5;
-  float d = length(coreUV - 0.5) * 2.0;
-
-  float farBias = smoothstep(80.0, 1200.0, vDist) * uFarGaussian * 2.0;
+  vec2  coreUV  = (gl_PointCoord - 0.5) * vCoreRatio + 0.5;
+  vec2  tightUV = (coreUV - 0.5) * uTightCrop + 0.5;
+  float jit     = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
   bool  moving  = vStreakMag >= 0.75;
-  // Screen-space jitter (gl_FragCoord, NOT gl_PointCoord) dithers the streak taps
-  // into a continuous smear. Screen-space means the dither pattern is fixed to the
-  // display and doesn't crawl with the moving star → no per-frame noise/flicker.
-  float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
 
-  // ── tight: small / faint stars → MIPMAPPED sprite ─────────────────────────
-  // These get minified (camera-distant), so the mip chain pre-filters them →
-  // no minification aliasing/shimmer. Out-of-[0,1] streak taps contribute ZERO
-  // (not the clamped edge texel) so the enlarged quad shows only the streak.
+  // ── Tight texture (star_2d_tight) ─────────────────────────────────────────
   float tight;
   if (!moving) {
-    tight = texture2D(uStarTex, coreUV, farBias).a;
+    tight = pow(texture2D(uStarTex, tightUV).r, uTexGamma);
+  } else {
+    float acc = 0.0;
+    for (int i = 0; i < 11; i++) {
+      float t   = (float(i) + jit) / 11.0 - 0.5;
+      vec2  suv = tightUV - vStreakUV * t;
+      vec2  inb = step(vec2(0.0), suv) * step(suv, vec2(1.0));
+      acc += pow(texture2D(uStarTex, suv).r, uTexGamma) * inb.x * inb.y;
+    }
+    tight = acc / 11.0;
+  }
+
+  // ── Wide texture (star_2d_wide) body ──────────────────────────────────────
+  float wide;
+  if (!moving) {
+    wide = pow(texture2D(uStarTexWide, coreUV).r, uTexGamma);
   } else {
     float acc = 0.0;
     for (int i = 0; i < 11; i++) {
       float t   = (float(i) + jit) / 11.0 - 0.5;
       vec2  suv = coreUV - vStreakUV * t;
       vec2  inb = step(vec2(0.0), suv) * step(suv, vec2(1.0));
-      acc += texture2D(uStarTex, suv, farBias).a * inb.x * inb.y;
-    }
-    tight = acc / 11.0;
-  }
-
-  // ── wide: bright stars → pure ANALYTIC gaussian ───────────────────────────
-  // Bright stars are large points (never minified), so they don't need the
-  // mipmap — and using it makes them FLICKER, because a large sprite's auto-LOD
-  // wobbles as its rasterised size rounds N↔N+1 px while the camera creeps. An
-  // analytic profile has no texture LOD at all → rock-stable on slow pans.
-  // A single SMOOTH gaussian — no sub-pixel-scale core. A tight centre spike's
-  // integrated brightness wobbles with the star's sub-pixel position (and the
-  // colour-dodge + bloom amplify it), which read as intensity changing with
-  // camera angle. A smooth gaussian spread over several pixels stays stable.
-  // Coefficient stays high enough to fade before the quad edge (else it boxes).
-  float wide;
-  if (!moving) {
-    wide = exp(-d * d * 2.8);
-  } else {
-    float acc = 0.0;
-    for (int i = 0; i < 11; i++) {
-      float t  = (float(i) + jit) / 11.0 - 0.5;
-      vec2  s  = coreUV - vStreakUV * t;
-      float dd = length(s - 0.5) * 2.0;
-      acc += exp(-dd * dd * 2.8);
+      acc += pow(texture2D(uStarTexWide, suv).r, uTexGamma) * inb.x * inb.y;
     }
     wide = acc / 11.0;
   }
 
-  // Small mipmapped sprite up to the bright-cap luminance; brightest get the halo.
-  float profile = smoothstep(uBrightCapLum, uBrightCapLum + 0.12, vLuminance);
-  float luma    = mix(tight, wide, profile);
+  // ── Body: screen-blend tight + wide weighted by vBodyBlend ────────────────
+  float tightW = tight * vBodyBlend;
+  float wideW  = wide  * (1.0 - vBodyBlend);
+  float body   = 1.0 - (1.0 - tightW) * (1.0 - wideW);
 
-  // Circular filter — clip anything past the (enlarged) quad's inscribed circle so
-  // the square point quad can never read as a box. The cutoff radius scales with
-  // vCoreRatio, which still contains the motion-blur streak (so streaks aren't cut).
-  luma *= 1.0 - smoothstep(vCoreRatio * 0.86, vCoreRatio, d);
+  // ── Bloom: wide texture at uBloomScale zoom, driven by luminance ──────────
+  float bloomAmt  = smoothstep(uBloomLumMin, uBloomLumMax, vLuminance) * uBloomFadeBase;
+  vec2  bloomUV   = (coreUV - 0.5) / max(uBloomScale, 0.001) + 0.5;
+  float bloomTex  = pow(texture2D(uStarTexWide, bloomUV).r, uBloomGamma);
+  // Thin safety fade at sprite boundary; gamma already crushes near-zero corner values
+  float bloomDist = length(gl_PointCoord - vec2(0.5));
+  float bloom     = bloomTex * bloomAmt * (1.0 - smoothstep(0.48, 0.5, bloomDist));
 
-  if (luma < 0.004) discard;
+  // Screen-blend body + bloom. The texture falloff defines the star shape —
+  // no circular clip needed; AdditiveBlending means zero-alpha adds nothing.
+  float luma = clamp(1.0 - (1.0 - body) * (1.0 - bloom), 0.0, 1.0);
 
-  // Color dodge: burns rapidly toward white at center.
+  if (luma < 0.002) discard;
+
+  // Color dodge — burns toward white at centre
   float core = pow(luma, 1.4);
   vec3 baseCol = (vSelected > 1.5) ? uPrimaryTint : vColor;
-  vec3 dodged = baseCol / max(1.0 - core * 0.75, 0.04);
-  // Normalize by max channel instead of clamping — preserves hue so blue stars stay blue
+  vec3 dodged  = baseCol / max(1.0 - core * 0.75, 0.04);
   float maxChan = max(dodged.r, max(dodged.g, dodged.b));
   vec3 col = maxChan > 1.0 ? dodged / maxChan : dodged;
 
-  // Saturation: dim stars get less, bright stars get full boost
-  float baseSat = mix(0.5, 1.4, vLuminance);
-
-  // Zoom boost for mid/faint stars only — bright stars (vLuminance > 0.7) are excluded
-  float zoomT = clamp((15.0 - uFov) / 10.0, 0.0, 1.0); // 0 at FOV≥15°, 1 at FOV≤5°
-  float faintMask = 1.0 - smoothstep(0.4, 0.75, vLuminance);
-  float satBoost = baseSat + zoomT * faintMask * 1.4;
-
+  // Saturation
   float mean = (col.r + col.g + col.b) / 3.0;
-  col = mean + (col - mean) * satBoost;
+  col = mean + (col - mean) * mix(0.5, 1.4, vLuminance);
   col = max(col, vec3(0.0));
 
-  // Aesthetic grade: yellows → orange, blues → teal
-  float yellowness = max(0.0, min(col.r, col.g) - col.b);
-  col.g -= yellowness * 0.09;
-  col.r += yellowness * 0.03;
-
-  float blueDominance = max(0.0, col.b - max(col.r, col.g));
-  col.g += blueDominance * 0.55;
-
-  // Re-normalise after grade
-  maxChan = max(col.r, max(col.g, col.b));
-  col = maxChan > 1.0 ? col / maxChan : col;
-
-  // Exposure gamma: 1/sqrt(uExposure) — gentler curve than 1/exp.
-  // Range 0.25→4 gives lumGamma 2.0→0.5, avoiding near-zero crush at the low end.
-  float lumGamma = 1.0 / sqrt(max(uExposure, 0.01));
-  // Bright compensation: top-tier stars resist exposure change (blue-hour saturation effect).
-  // smoothstep selects brightest ~10% (mag 3+); raising slider past 1 widens the protected tier.
-  float brightFactor = smoothstep(0.08, 0.25, vLuminance);
-  float effectiveGamma = mix(lumGamma, 1.0, clamp(brightFactor * uExpBrightCompression, 0.0, 1.0));
-  // Scale brightness floor with exposure — at low exposure dim stars get no lift
-  float adjMinBright = uMinBrightness * clamp(uExposure, 0.0, 1.0);
-  float lum = mix(adjMinBright, 1.0, vLuminance);
-  float exposedLum = pow(lum, effectiveGamma);
-  gl_FragColor = vec4(col, luma * exposedLum * vAlpha * 7.0);
+  gl_FragColor = vec4(col, luma * vAlpha * uExposure);
 }
 `;
 
@@ -443,6 +329,7 @@ export class StarField {
     this._visible  = new Float32Array(catalog.starCount).fill(1);
     this._hover    = new Float32Array(catalog.starCount);
 
+    this._textures = this._loadStarTextures();
     this._build();
     this._buildRings();
     this._buildLines();
@@ -455,34 +342,54 @@ export class StarField {
    * channel; the fragment samples .a as the brightness profile. Mipmaps give
    * distant/small points pre-filtered minification → no shimmer.
    */
-  _createStarSprite() {
-    const S = 64;
+  _makeProceduralTex(sigma) {
+    const S = 64, c = (S - 1) / 2;
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = S;
     const ctx = canvas.getContext('2d');
     const img = ctx.createImageData(S, S);
-    const c = (S - 1) / 2;
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
-        const dx = (x - c) / (S * 0.5);
-        const dy = (y - c) / (S * 0.5);
-        const r = Math.sqrt(dx * dx + dy * dy);   // 0 at centre, ~1 at edge
-        let a = Math.exp(-r * r * 6.0);            // soft radial gaussian
-        if (r > 1.0) a = 0.0;                      // hard circular cutoff
+        const r = Math.sqrt((x - c) ** 2 + (y - c) ** 2) / (S * 0.5);
+        const a = Math.exp(-r * r * sigma);
         const i = (y * S + x) * 4;
-        img.data[i] = 255; img.data[i + 1] = 255; img.data[i + 2] = 255;
-        img.data[i + 3] = Math.round(a * 255);
+        img.data[i] = img.data[i+1] = img.data[i+2] = Math.round(a * 255);
+        img.data[i+3] = 255;
       }
     }
     ctx.putImageData(img, 0, 0);
-
     const tex = new THREE.CanvasTexture(canvas);
     tex.generateMipmaps = true;
-    tex.minFilter = THREE.LinearMipmapLinearFilter; // trilinear
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.magFilter = THREE.LinearFilter;
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-    tex.needsUpdate = true;
     return tex;
+  }
+
+  _loadStarTextures() {
+    const tight = this._makeProceduralTex(7.0);
+    const wide  = this._makeProceduralTex(2.5);
+
+    const loader = new THREE.TextureLoader();
+    const base = import.meta.env.BASE_URL;
+
+    loader.load(`${base}star_2d_tight.png`, (tex) => {
+      tex.generateMipmaps = true;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      if (this.material) this.material.uniforms.uStarTex.value = tex;
+    });
+
+    loader.load(`${base}star_2d_wide.png`, (tex) => {
+      tex.generateMipmaps = true;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      if (this.material) this.material.uniforms.uStarTexWide.value = tex;
+    });
+
+    return { tight, wide };
   }
 
   _build() {
@@ -501,30 +408,32 @@ export class StarField {
       vertexShader: VERT,
       fragmentShader: FRAG,
       uniforms: {
-        uTime:             { value: 0 },
-        uMinMag:           { value: this.maxMagnitude },
-        uMaxDist:          { value: this.maxDistanceLy },
-        uSizeScale:        { value: 1.0 },
-        uSizeMin:          { value: 1.6 },
-        uBaseSize:         { value: 2.6 },
-        uBleedFactor:      { value: 0.38 },
-        uSizeMax:          { value: 60.0 },
-        uBrightCapLum:     { value: 0.45 },
-        uBrightCapSize:    { value: 11.0 },
-        uRefMag:           { value: 4.8 },
-        uDimBias:          { value: 0.40 },
-        uExposure:         { value: 1.0 },
-        uMinBrightness:         { value: 0.130 },
-        uExpBrightCompression:  { value: 0.00 },
-        uZoomScale:        { value: 1.85 },
-        uFov:              { value: 70.0 },
-        uViewport:         { value: new THREE.Vector2(window.innerWidth, window.innerHeight)
-                               .multiplyScalar(Math.min(window.devicePixelRatio || 1, 2)) },
-        uPrevViewProj:     { value: new THREE.Matrix4() },
-        uMotionBlur:       { value: 0.6 },
-        uFarGaussian:      { value: 0.2 },
-        uStarTex:          { value: this._createStarSprite() },
-        uPrimaryTint:      { value: new THREE.Color(1.0, 0.85, 0.4) },
+        uTime:            { value: 0 },
+        uMinMag:          { value: this.maxMagnitude },
+        uMaxDist:         { value: this.maxDistanceLy },
+        uSizeScale:       { value: 1.0 },
+        uSizeMin:         { value: 2.6 },
+        uSizeMax:         { value: 110.0 },
+        uTightBaseSize:   { value: 2.0 },
+        uWideBaseSize:    { value: 21.0 },
+        uBodyMagMin:      { value: 2.0 },
+        uBodyMagMax:      { value: 7.1 },
+        uTexGamma:        { value: 2.2 },
+        uExposure:        { value: 0.4 },
+        uFov:             { value: 70.0 },
+        uViewport:        { value: new THREE.Vector2(window.innerWidth, window.innerHeight)
+                              .multiplyScalar(Math.min(window.devicePixelRatio || 1, 2)) },
+        uPrevViewProj:    { value: new THREE.Matrix4() },
+        uMotionBlur:      { value: 0.6 },
+        uStarTex:         { value: this._textures.tight },
+        uStarTexWide:     { value: this._textures.wide },
+        uBloomScale:      { value: 6.0 },
+        uBloomFadeBase:   { value: 0.05 },
+        uBloomLumMin:     { value: 0.0 },
+        uBloomLumMax:     { value: 0.35 },
+        uBloomGamma:      { value: 12.0 },
+        uTightCrop:       { value: 0.40 },
+        uPrimaryTint:     { value: new THREE.Color(1.0, 0.85, 0.4) },
       },
       vertexColors: true,
       transparent: true,
@@ -671,18 +580,22 @@ export class StarField {
     this.geometry.attributes.aHover.needsUpdate = true;
   }
 
-  setSizeMin(v)               { this.material.uniforms.uSizeMin.value = v; }
-  setSizeMax(v)               { this.material.uniforms.uSizeMax.value = v; }
-  setBrightCapLum(v)          { this.material.uniforms.uBrightCapLum.value = v; }
-  setBrightCapSize(v)         { this.material.uniforms.uBrightCapSize.value = v; }
-  setBaseSize(v)              { this.material.uniforms.uBaseSize.value = v; }
-  setBleedFactor(v)           { this.material.uniforms.uBleedFactor.value = v; }
-  setRefMag(v)                { this.material.uniforms.uRefMag.value = v; }
-  setDimBias(v)               { this.material.uniforms.uDimBias.value = v; }
-  setZoomScale(v)             { this.material.uniforms.uZoomScale.value = v; }
-  setFov(fov)                 { this.material.uniforms.uFov.value = fov; }
-  setFarGaussian(v)           { this.material.uniforms.uFarGaussian.value = v; }
-  setMotionBlur(v)            { this.material.uniforms.uMotionBlur.value = v; }
+  setSizeMin(v)           { this.material.uniforms.uSizeMin.value = v; }
+  setSizeMax(v)           { this.material.uniforms.uSizeMax.value = v; }
+  setTexGamma(v)          { this.material.uniforms.uTexGamma.value = v; }
+  setTightBaseSize(v)     { this.material.uniforms.uTightBaseSize.value = v; }
+  setWideBaseSize(v)      { this.material.uniforms.uWideBaseSize.value = v; }
+  setBodyMagMin(v)        { this.material.uniforms.uBodyMagMin.value = v; }
+  setBodyMagMax(v)        { this.material.uniforms.uBodyMagMax.value = v; }
+  setBloomScale(v)        { this.material.uniforms.uBloomScale.value = v; }
+  setBloomFadeBase(v)     { this.material.uniforms.uBloomFadeBase.value = v; }
+  setBloomLumMin(v)       { this.material.uniforms.uBloomLumMin.value = v; }
+  setBloomLumMax(v)       { this.material.uniforms.uBloomLumMax.value = v; }
+  setBloomGamma(v)        { this.material.uniforms.uBloomGamma.value = v; }
+  setTightCrop(v)         { this.material.uniforms.uTightCrop.value = v; }
+  setFov(fov)             { this.material.uniforms.uFov.value = fov; }
+  setMotionBlur(v)        { this.material.uniforms.uMotionBlur.value = v; }
+  setBaseSize(v)          { /* shelved — use setTightBaseSize / setWideBaseSize */ }
 
   /**
    * Per-frame camera motion for the motion-blur shader. Call once per frame from
@@ -698,9 +611,6 @@ export class StarField {
     this.material.uniforms.uPrevViewProj.value.copy(this._curViewProj);
     this._curViewProj.copy(this._tmpViewProj);
   }
-  setMinBrightness(v)         { this.material.uniforms.uMinBrightness.value = v; }
-  setExpBrightCompression(v)  { this.material.uniforms.uExpBrightCompression.value = v; }
-
   setExposure(v) {
     this.material.uniforms.uExposure.value = v;
   }
@@ -778,30 +688,23 @@ export class StarField {
 
     // Mirror shader size math to determine if a star is large enough to click
     const u = this.material.uniforms;
-    const fovFactor   = 15.0 / Math.max(5.0, Math.min(15.0, u.uFov.value));
-    const zoomAdjust  = Math.pow(fovFactor, u.uZoomScale.value);
-    const expStops    = (u.uExposure.value - 1.0) * 4.0; // matches shader multiplier
+    const fovFactor  = 15.0 / Math.max(5.0, Math.min(15.0, u.uFov.value));
     const computeSize = (mag) => {
-      const starStops      = (u.uRefMag.value - mag) * 1.329;
-      const dimBias        = u.uDimBias.value * Math.max(0, -starStops);
-      const effectiveStops = Math.max(0, expStops + starStops + dimBias);
-      const mult           = Math.pow(2, effectiveStops * u.uBleedFactor.value);
-      return Math.max(u.uSizeMin.value, u.uBaseSize.value * mult) * u.uSizeScale.value * zoomAdjust;
+      const flux = Math.exp(-0.92103 * mag);
+      const lum  = Math.min(1, Math.pow(flux * 4.0, 0.45));
+      const size = u.uTightBaseSize.value + (u.uWideBaseSize.value - u.uTightBaseSize.value) * lum;
+      return Math.max(u.uSizeMin.value, Math.min(u.uSizeMax.value, size)) * u.uSizeScale.value * fovFactor;
     };
 
-    const MIN_SIZE = 1.5; // px — lowered so faint-but-visible stars remain selectable
+    const MIN_SIZE = 1.5;
     const candidates = [];
 
     for (let i = 0; i < this.catalog.starCount; i++) {
       if (magnitudes[i] > this.maxMagnitude) continue;
       if (distances[i]  > this.maxDistanceLy) continue;
 
-      // Mirror shader visWeight — skip stars faded out by exposure
-      const starStops  = (u.uRefMag.value - magnitudes[i]) * 1.329;
-      const expStopsV  = (u.uExposure.value - 1.0) * 4.0;
-      const dimBiasV   = u.uDimBias.value * Math.max(0, -starStops);
-      const totalStops = expStopsV + starStops + dimBiasV;
-      const visWeight  = Math.min(1, Math.max(0, totalStops * 1.5 + 1.0));
+      // Mirror shader visWeight
+      const visWeight = Math.min(1, Math.max(0, (this.maxMagnitude - magnitudes[i]) * 1.5 + 1.0));
       if (visWeight < 0.05) continue;
 
       if (computeSize(magnitudes[i]) < MIN_SIZE) continue;

@@ -612,93 +612,94 @@ export class SkyMapView {
     this._devPanel.className = 'dev-panel panel';
     this._devPanel.style.display = 'none';
     this._devPanel.innerHTML = `
-      <div class="pd-title">star rendering</div>
+      <div class="pd-title">star body</div>
       <div class="dev-row">
-        <span class="dev-label">bleed factor</span>
-        <input type="range" id="dev-bleed" min="0" max="1" step="0.01" value="0.38" />
-        <span class="dev-val" id="dev-bleed-val">0.38</span>
+        <span class="dev-label">tight base px</span>
+        <input type="range" id="dev-tight-size" min="0.5" max="80" step="0.5" value="2" />
+        <span class="dev-val" id="dev-tight-size-val">2 px</span>
       </div>
       <div class="dev-row">
-        <span class="dev-label">ref mag</span>
-        <input type="range" id="dev-ref-mag" min="-2" max="8" step="0.1" value="4.8" />
-        <span class="dev-val" id="dev-ref-mag-val">4.8</span>
+        <span class="dev-label">tight crop</span>
+        <input type="range" id="dev-tight-crop" min="0.3" max="1.5" step="0.05" value="0.4" />
+        <span class="dev-val" id="dev-tight-crop-val">0.40</span>
       </div>
       <div class="dev-row">
-        <span class="dev-label">dim bias</span>
-        <input type="range" id="dev-dim-bias" min="0" max="2" step="0.05" value="0.40" />
-        <span class="dev-val" id="dev-dim-bias-val">0.40</span>
+        <span class="dev-label">wide base px</span>
+        <input type="range" id="dev-wide-size" min="1" max="120" step="1" value="21" />
+        <span class="dev-val" id="dev-wide-size-val">21.0 px</span>
       </div>
       <div class="dev-row">
         <span class="dev-label">size min</span>
-        <input type="range" id="dev-size-min" min="0.1" max="5" step="0.1" value="1.6" />
-        <span class="dev-val" id="dev-size-min-val">1.6 px</span>
+        <input type="range" id="dev-size-min" min="0.5" max="5" step="0.1" value="2.6" />
+        <span class="dev-val" id="dev-size-min-val">2.6 px</span>
       </div>
       <div class="dev-row">
         <span class="dev-label">size max</span>
-        <input type="range" id="dev-size-max" min="5" max="120" step="1" value="60" />
-        <span class="dev-val" id="dev-size-max-val">60 px</span>
+        <input type="range" id="dev-size-max" min="5" max="250" step="5" value="110" />
+        <span class="dev-val" id="dev-size-max-val">110 px</span>
       </div>
       <div class="dev-row">
-        <span class="dev-label">bright cap lum</span>
-        <input type="range" id="dev-bright-cap-lum" min="0.2" max="0.9" step="0.01" value="0.45" />
-        <span class="dev-val" id="dev-bright-cap-lum-val">0.45</span>
+        <span class="dev-label">tex gamma</span>
+        <input type="range" id="dev-tex-gamma" min="0.3" max="4" step="0.1" value="2.2" />
+        <span class="dev-val" id="dev-tex-gamma-val">2.2</span>
       </div>
       <div class="dev-row">
-        <span class="dev-label">bright cap px</span>
-        <input type="range" id="dev-bright-cap-size" min="5" max="60" step="1" value="11" />
-        <span class="dev-val" id="dev-bright-cap-size-val">11 px</span>
+        <span class="dev-label">body mag min</span>
+        <input type="range" id="dev-body-mag-min" min="-2" max="7" step="0.1" value="2" />
+        <span class="dev-val" id="dev-body-mag-min-val">2.0</span>
       </div>
       <div class="dev-row">
-        <span class="dev-label">far softness</span>
-        <input type="range" id="dev-far-gauss" min="0" max="1" step="0.01" value="0.2" />
-        <span class="dev-val" id="dev-far-gauss-val">0.20</span>
+        <span class="dev-label">body mag max</span>
+        <input type="range" id="dev-body-mag-max" min="-2" max="8" step="0.1" value="7.1" />
+        <span class="dev-val" id="dev-body-mag-max-val">7.1</span>
       </div>
+      <div class="pd-title" style="margin-top:8px">bloom</div>
+      <div class="dev-row">
+        <span class="dev-label">bloom scale</span>
+        <input type="range" id="dev-bloom-scale" min="1" max="32" step="0.5" value="6" />
+        <span class="dev-val" id="dev-bloom-scale-val">6.0×</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">bloom gamma</span>
+        <input type="range" id="dev-bloom-gamma" min="0.3" max="12" step="0.1" value="12" />
+        <span class="dev-val" id="dev-bloom-gamma-val">12.0</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">bloom fade base</span>
+        <input type="range" id="dev-bloom-fade" min="0" max="2" step="0.05" value="0.05" />
+        <span class="dev-val" id="dev-bloom-fade-val">0.05</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">bloom lum min</span>
+        <input type="range" id="dev-bloom-lum-min" min="0" max="1" step="0.01" value="0" />
+        <span class="dev-val" id="dev-bloom-lum-min-val">0.00</span>
+      </div>
+      <div class="dev-row">
+        <span class="dev-label">bloom lum max</span>
+        <input type="range" id="dev-bloom-lum-max" min="0" max="1" step="0.01" value="0.35" />
+        <span class="dev-val" id="dev-bloom-lum-max-val">0.35</span>
+      </div>
+      <div class="pd-title" style="margin-top:8px">motion + pan</div>
       <div class="dev-row">
         <span class="dev-label">motion blur</span>
         <input type="range" id="dev-motion-blur" min="0" max="2.5" step="0.05" value="0.6" />
         <span class="dev-val" id="dev-motion-blur-val">0.60</span>
       </div>
       <div class="dev-row">
-        <span class="dev-label">zoom scale</span>
-        <input type="range" id="dev-zoom" min="0" max="4" step="0.05" value="1.85" />
-        <span class="dev-val" id="dev-zoom-val">1.85</span>
-      </div>
-      <div class="dev-row">
         <span class="dev-label">pan tighten</span>
         <input type="range" id="dev-pan-scale" min="0" max="3" step="0.05" value="1.0" />
         <span class="dev-val" id="dev-pan-scale-val">1.00</span>
-      </div>
-      <div class="dev-row">
-        <span class="dev-label">min bright</span>
-        <input type="range" id="dev-min-bright" min="0" max="0.5" step="0.005" value="0.130" />
-        <span class="dev-val" id="dev-min-bright-val">0.130</span>
-      </div>
-      <div class="dev-row">
-        <span class="dev-label">exp bright comp</span>
-        <input type="range" id="dev-exp-bright-comp" min="0" max="3" step="0.05" value="0.00" />
-        <span class="dev-val" id="dev-exp-bright-comp-val">0.00</span>
-      </div>
-      <div class="pd-title" style="margin-top:8px">bloom</div>
-      <div class="dev-row">
-        <span class="dev-label">bloom str</span>
-        <input type="range" id="dev-bloom-str" min="0" max="1" step="0.01" value="0.34" />
-        <span class="dev-val" id="dev-bloom-str-val">0.34</span>
-      </div>
-      <div class="dev-row">
-        <span class="dev-label">bloom radius</span>
-        <input type="range" id="dev-bloom-rad" min="0" max="1" step="0.01" value="0.10" />
-        <span class="dev-val" id="dev-bloom-rad-val">0.10</span>
       </div>
       <div class="pd-title" style="margin-top:8px">line rendering</div>
       <div class="dev-row">
         <span class="dev-label">thickness</span>
         <input type="range" id="dev-line-thick" min="0.5" max="8" step="0.5" value="3.0" />
-        <span class="dev-val" id="dev-line-thick-val">1.5 px</span>
+        <span class="dev-val" id="dev-line-thick-val">3.0 px</span>
       </div>
       <div class="dev-row">
         <span class="dev-label">opacity</span>
         <input type="range" id="dev-line-opacity" min="0" max="1" step="0.01" value="0.24" />
-        <span class="dev-val" id="dev-line-opacity-val">0.85</span>
+        <span class="dev-val" id="dev-line-opacity-val">0.24</span>
       </div>
     `;
     this._injectDevPanelStyles();
@@ -720,23 +721,23 @@ export class SkyMapView {
       });
     };
 
-    wire('dev-bleed',            'dev-bleed-val',            v => v.toFixed(2), v => this.starField.setBleedFactor(v));
-    wire('dev-ref-mag',          'dev-ref-mag-val',          v => v.toFixed(1), v => this.starField.setRefMag(v));
-    wire('dev-dim-bias',         'dev-dim-bias-val',         v => v.toFixed(2), v => this.starField.setDimBias(v));
-    wire('dev-size-min',         'dev-size-min-val',         v => v.toFixed(1) + ' px', v => this.starField.setSizeMin(v));
-    wire('dev-size-max',         'dev-size-max-val',         v => v.toFixed(0) + ' px', v => this.starField.setSizeMax(v));
-    wire('dev-bright-cap-lum',   'dev-bright-cap-lum-val',  v => v.toFixed(2),           v => this.starField.setBrightCapLum(v));
-    wire('dev-bright-cap-size',  'dev-bright-cap-size-val', v => v.toFixed(0) + ' px',   v => this.starField.setBrightCapSize(v));
-    wire('dev-far-gauss',        'dev-far-gauss-val',        v => v.toFixed(2),           v => this.starField.setFarGaussian(v));
-    wire('dev-motion-blur',      'dev-motion-blur-val',      v => v.toFixed(2),           v => this.starField.setMotionBlur(v));
-    wire('dev-bloom-str',        'dev-bloom-str-val',        v => v.toFixed(2),           v => { if (this.sm.bloomPass) this.sm.bloomPass.strength = v; });
-    wire('dev-bloom-rad',        'dev-bloom-rad-val',        v => v.toFixed(2),           v => { if (this.sm.bloomPass) this.sm.bloomPass.radius = v; });
-    wire('dev-zoom',             'dev-zoom-val',             v => v.toFixed(2), v => this.starField.setZoomScale(v));
-    wire('dev-pan-scale',        'dev-pan-scale-val',        v => v.toFixed(2), v => this.ptz.setPanScale(v));
-    wire('dev-min-bright',       'dev-min-bright-val',       v => v.toFixed(3), v => this.starField.setMinBrightness(v));
-    wire('dev-exp-bright-comp',  'dev-exp-bright-comp-val',  v => v.toFixed(2), v => this.starField.setExpBrightCompression(v));
-    wire('dev-line-thick',       'dev-line-thick-val',       v => v.toFixed(1) + ' px', v => this.starField.setLineThickness(v));
-    wire('dev-line-opacity',     'dev-line-opacity-val',     v => v.toFixed(2),           v => this.starField.setLineOpacity(v));
+    wire('dev-tight-size',    'dev-tight-size-val',    v => v.toFixed(1) + ' px', v => this.starField.setTightBaseSize(v));
+    wire('dev-tight-crop',    'dev-tight-crop-val',    v => v.toFixed(2),          v => this.starField.setTightCrop(v));
+    wire('dev-wide-size',     'dev-wide-size-val',     v => v.toFixed(1) + ' px', v => this.starField.setWideBaseSize(v));
+    wire('dev-size-min',      'dev-size-min-val',      v => v.toFixed(1) + ' px', v => this.starField.setSizeMin(v));
+    wire('dev-size-max',      'dev-size-max-val',      v => v.toFixed(0) + ' px', v => this.starField.setSizeMax(v));
+    wire('dev-tex-gamma',     'dev-tex-gamma-val',     v => v.toFixed(1),          v => this.starField.setTexGamma(v));
+    wire('dev-body-mag-min',  'dev-body-mag-min-val',  v => v.toFixed(1),          v => this.starField.setBodyMagMin(v));
+    wire('dev-body-mag-max',  'dev-body-mag-max-val',  v => v.toFixed(1),          v => this.starField.setBodyMagMax(v));
+    wire('dev-bloom-scale',   'dev-bloom-scale-val',   v => v.toFixed(1) + '×',   v => this.starField.setBloomScale(v));
+    wire('dev-bloom-gamma',   'dev-bloom-gamma-val',   v => v.toFixed(1),          v => this.starField.setBloomGamma(v));
+    wire('dev-bloom-fade',    'dev-bloom-fade-val',    v => v.toFixed(2),          v => this.starField.setBloomFadeBase(v));
+    wire('dev-bloom-lum-min', 'dev-bloom-lum-min-val', v => v.toFixed(2),          v => this.starField.setBloomLumMin(v));
+    wire('dev-bloom-lum-max', 'dev-bloom-lum-max-val', v => v.toFixed(2),          v => this.starField.setBloomLumMax(v));
+    wire('dev-motion-blur',   'dev-motion-blur-val',   v => v.toFixed(2),          v => this.starField.setMotionBlur(v));
+    wire('dev-pan-scale',     'dev-pan-scale-val',     v => v.toFixed(2),          v => this.ptz.setPanScale(v));
+    wire('dev-line-thick',    'dev-line-thick-val',    v => v.toFixed(1) + ' px',  v => this.starField.setLineThickness(v));
+    wire('dev-line-opacity',  'dev-line-opacity-val',  v => v.toFixed(2),          v => this.starField.setLineOpacity(v));
   }
 
   _injectDevPanelStyles() {
